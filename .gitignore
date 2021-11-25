@@ -3,3 +3,9 @@
 
 # Neard
 /.dev
+/.idea/.gitignore
+/.idea/deployment.xml
+/.idea/module-mysql.iml
+/.idea/modules.xml
+/.idea/php.xml
+/.idea/vcs.xml
