@@ -44,7 +44,7 @@
 
 ## r4 (2016/05/03)
 
-* Add params in `neard.conf` file for Neard 1.0.19 to change root password (Issue neard/neard#134)
+* Add params in `bearsampp.conf` file for Neard 1.0.19 to change root password (Issue neard/neard#134)
 
 ## r3 (2016/04/19)
 
