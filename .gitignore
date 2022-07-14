@@ -1,7 +1,7 @@
 # Jetbrains
 /*.iml
 
-# Neard
+# bearsampp
 /.dev
 /.idea/.gitignore
 /.idea/deployment.xml
