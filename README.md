@@ -5,7 +5,7 @@ This is a module of [bearsampp project](https://github.com/bearsampp/bearsampp) 
 
 ## Documentation and downloads
 
-https://https://bearsampp.github.io//modules/mysql
+https://bearsampp.com//module/mysql
 
 ## Issues
 
