@@ -1,11 +1,18 @@
 # Jetbrains
 /*.iml
-
-# bearsampp
-/.dev
+/.idea
 /.idea/.gitignore
 /.idea/deployment.xml
-/.idea/module-mysql.iml
+/.idea/discord.xml
+/.idea/module-perl.iml
 /.idea/modules.xml
 /.idea/php.xml
 /.idea/vcs.xml
+
+# Neard
+/.dev
+
+# Visual Studio
+.vscode/
+.vs/
+.vsc/
