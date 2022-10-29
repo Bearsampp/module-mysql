@@ -13,9 +13,9 @@ net_buffer_length = 8K
 read_buffer_size = 256K
 read_rnd_buffer_size = 512K
 myisam_sort_buffer_size = 8M
-basedir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql8.0.31
+basedir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql8.0.30
 log-error=~BEARSAMPP_LIN_PATH~/logs/mysql.log
-datadir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql8.0.31/data
+datadir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql8.0.30/data
 
 skip-federated
 
