@@ -1,21 +1,33 @@
 name: Quickpick Dispatcher
 
 on:
-  push:
-    branches:
-      - main
-  release:
-    types: [published, edited, prereleased]
-  workflow_dispatch:
+    pull_request:
+        types:
+            - closed
+        branches:
+            - 'main'
+    release:
+        types:
+            - created
+            - edited
+            - prereleased
+    workflow_dispatch:
 
 jobs:
-  dispatch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Repository Dispatch
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.GH_ACTIONS }}
-          repository: Bearsampp/bearsampp
-          event-type: module_release_created
-          client-payload: '{"module": "${{ github.repository }}"}'
+    dispatch_workflow:
+        if: |
+            (github.event_name == 'workflow_dispatch') || 
+            (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || 
+            (github.event_name == 'release' && (github.event.action == 'created' || github.event.action == 'edited' || github.event.action == 'prereleased'))
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Invoke workflow in another repo with inputs
+              uses: peter-evans/repository-dispatch@v2
+              with:
+                  token: ${{ secrets.GH_PAT }}
+                  repository: Bearsampp/Bearsampp
+                  event-type: run-combine-releases
+                  client-payload: '{"workflow": "combine_releases.yml"}'
