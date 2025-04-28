@@ -1,25 +1,21 @@
 name: Quickpick Dispatcher
 
 on:
-    pull_request:
-        types:
-            - closed
-        branches:
-            - 'main'
-    workflow_dispatch:
+  push:
+    branches:
+      - main
+  release:
+    types: [published, edited, prereleased]
+  workflow_dispatch:
 
 jobs:
-    if_merged:
-        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-
-            - name: Invoke workflow in another repo with inputs
-              uses: benc-uk/workflow-dispatch@v1.2.4
-              with:
-                  workflow: combine_releases.yml
-                  repo: Bearsampp/Bearsampp
-                  # Required when using the `repo` option. Either a PAT or a token generated from the GitHub app or CLI
-                  token: "${{ secrets.GH_PAT }}"
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.GH_ACTIONS }}
+          repository: Bearsampp/bearsampp
+          event-type: module_release_created
+          client-payload: '{"module": "${{ github.repository }}"}'
