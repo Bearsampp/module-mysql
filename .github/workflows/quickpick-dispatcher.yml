@@ -15,7 +15,7 @@ jobs:
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
           repository: Bearsampp/bearsampp
           event-type: module_release_created
           client-payload: '{"module": "${{ github.repository }}"}'
