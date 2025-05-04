@@ -29,5 +29,5 @@ jobs:
               with:
                   token: ${{ secrets.GH_PAT }}
                   repository: Bearsampp/Bearsampp
-                  event-type: run-combine-releases
+                  event-type: quickpick_dispatch
                   client-payload: '{"workflow": "combine_releases.yml"}'
