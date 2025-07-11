@@ -16,14 +16,13 @@ on:
 jobs:
     dispatch_workflow:
         if: |
-            (github.event_name == 'workflow_dispatch') || 
-            (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || 
+            (github.event_name == 'workflow_dispatch') ||
+            (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
             (github.event_name == 'release' && (github.event.action == 'created' || github.event.action == 'edited' || github.event.action == 'prereleased'))
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
               uses: actions/checkout@v4
-
             - name: Invoke workflow in another repo with inputs
               uses: peter-evans/repository-dispatch@v2
               with:
