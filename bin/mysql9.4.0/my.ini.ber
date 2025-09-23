@@ -17,18 +17,22 @@ basedir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql9.4.0
 log-error=~BEARSAMPP_LIN_PATH~/logs/mysql.log
 datadir=~BEARSAMPP_LIN_PATH~/bin/mysql/mysql9.4.0/data
 
-# skip-federated
-
 server-id = 1
 
 innodb_buffer_pool_size = 16M
-# innodb_log_file_size = 5M
 innodb_log_buffer_size = 8M
 #innodb_flush_log_at_trx_commit = 1
 #innodb_lock_wait_timeout = 50
 
+# In bin/mysql9.4.0/my.ini
+# (skip-federated and innodb_log_file_size are removed in MySQL 8.4+,
+# so they should be deleted, not commented out.
+# innodb_redo_log_capacity should be used instead of innodb_log_file_size if needed)
+innodb_redo_log_capacity = 10M # Example value
+
 sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO
-#default_authentication_plugin=mysql_native_password
+default_authentication_plugin=mysql_native_password
+mysql-native-password=ON
 character-set-server=UTF8MB4
 
 [mysqldump]
