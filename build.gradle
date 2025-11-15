@@ -1,17 +1,22 @@
 /*
  * Bearsampp Module MySQL - Gradle Build
  *
- * This is a hybrid build configuration that:
- * 1. Imports existing Ant build files for backward compatibility
- * 2. Provides modern Gradle features (caching, incremental builds, parallel execution)
- * 3. Allows gradual migration from Ant to Gradle
+ * This is a modern Gradle build configuration that provides:
+ * 1. Native Gradle build functionality (no Ant dependencies)
+ * 2. Modern features (caching, incremental builds, parallel execution)
+ * 3. Integration with modules-untouched repository for version management
+ * 4. Automated release packaging with hash generation
  *
  * Usage:
  *   gradle tasks                              - List all available tasks
- *   gradle release                            - Interactive release (prompts for version)
- *   gradle release "-PbundleVersion=8.0.40"   - Non-interactive release
- *   gradle clean                              - Clean build artifacts
  *   gradle info                               - Display build information
+ *   gradle release                            - Interactive release (prompts for version)
+ *   gradle release -PbundleVersion=8.0.40     - Build release for specific version
+ *   gradle releaseAll                         - Build all available versions
+ *   gradle listVersions                       - List available versions in bin/
+ *   gradle listReleases                       - List releases from modules-untouched
+ *   gradle clean                              - Clean build artifacts
+ *   gradle verify                             - Verify build environment
  */
 
 plugins {
@@ -39,11 +44,44 @@ ext {
     bundleRelease = buildProps.getProperty('bundle.release', '1.0.0')
     bundleType = buildProps.getProperty('bundle.type', 'bins')
     bundleFormat = buildProps.getProperty('bundle.format', '7z')
-}
 
-// Verify dev path exists
-if (!file(ext.devPath).exists()) {
-    throw new GradleException("Dev path not found: ${ext.devPath}. Please ensure the 'dev' project exists in ${ext.rootDir}")
+    // Build paths - with configurable base path
+    // Priority: 1) build.properties, 2) Environment variable, 3) Default
+    def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
+    def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
+    def defaultBuildPath = "${rootDir}/bearsampp-build"
+
+    buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
+
+    // Use shared bearsampp-build/tmp directory structure
+    buildTmpPath = file("${buildBasePath}/tmp").absolutePath
+    bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
+    bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
+    bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
+
+    // Download and extract paths
+    bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
+    bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
+
+    // Final build output path
+    mysqlBuildPath = file("${buildBasePath}/${bundleType}/${bundleName}/${bundleRelease}").absolutePath
+
+    // Capture values at configuration time for use in tasks
+    def projectBasedirValue = projectBasedir
+    def rootDirValue = rootDir
+    def devPathValue = devPath
+    def bundleNameValue = bundleName
+    def bundleReleaseValue = bundleRelease
+    def bundleTypeValue = bundleType
+    def bundleFormatValue = bundleFormat
+    def buildBasePathValue = buildBasePath
+    def buildTmpPathValue = buildTmpPath
+    def bundleTmpPrepPathValue = bundleTmpPrepPath
+    def bundleTmpBuildPathValue = bundleTmpBuildPath
+    def bundleTmpSrcPathValue = bundleTmpSrcPath
+    def bundleTmpDownloadPathValue = bundleTmpDownloadPath
+    def bundleTmpExtractPathValue = bundleTmpExtractPath
+    def mysqlBuildPathValue = mysqlBuildPath
 }
 
 // Configure repositories for dependencies
@@ -52,28 +90,211 @@ repositories {
 }
 
 // ============================================================================
-// ANT INTEGRATION - Import existing Ant build files
+// HELPER FUNCTIONS
 // ============================================================================
 
-// Set Ant properties before importing
-ant.properties['project.basedir'] = ext.projectBasedir
-ant.properties['root.dir'] = ext.rootDir
-ant.properties['dev.path'] = ext.devPath
-ant.properties['build.properties'] = ext.buildPropertiesFile
+// Fetch mysql.properties from modules-untouched repository
+def fetchModulesUntouchedProperties() {
+    def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/mysql.properties"
+    try {
+        def connection = new URL(propsUrl).openConnection()
+        connection.setRequestProperty("User-Agent", "Bearsampp-Module-MySQL-Build")
+        connection.setConnectTimeout(10000)
+        connection.setReadTimeout(10000)
 
-// Load build.properties into Ant
-ant.property(file: ext.buildPropertiesFile)
+        if (connection.responseCode == 200) {
+            def props = new Properties()
+            connection.inputStream.withCloseable { stream ->
+                props.load(stream)
+            }
+            return props
+        } else {
+            println "[WARNING] Failed to fetch mysql.properties: HTTP ${connection.responseCode}"
+            return null
+        }
+    } catch (Exception e) {
+        println "[WARNING] Could not fetch mysql.properties from modules-untouched: ${e.message}"
+        return null
+    }
+}
 
-// Import the main Ant build file
-// This preserves all existing Ant functionality
-ant.importBuild('build.xml') { antTargetName ->
-    // Map Ant target names to Gradle task names
-    // Prefix all with 'ant-' to avoid conflicts
-    return "ant-${antTargetName}".toString()
+// Function to download from modules-untouched repository
+def downloadFromModulesUntouched(String version, File destDir) {
+    println "Checking modules-untouched repository..."
+
+    // First, try to fetch mysql.properties from modules-untouched
+    def untouchedProps = fetchModulesUntouchedProperties()
+    def untouchedUrl = null
+
+    if (untouchedProps) {
+        untouchedUrl = untouchedProps.getProperty(version)
+        if (untouchedUrl) {
+            println "Found version ${version} in modules-untouched mysql.properties"
+            println "Downloading from:"
+            println "  ${untouchedUrl}"
+        } else {
+            println "Version ${version} not found in modules-untouched mysql.properties"
+            println "Attempting to construct URL based on standard format..."
+            // Fallback to constructed URL
+            untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
+            println "  ${untouchedUrl}"
+        }
+    } else {
+        println "Could not fetch mysql.properties, using standard URL format..."
+        // Fallback to constructed URL
+        untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
+        println "  ${untouchedUrl}"
+    }
+
+    // Determine filename from URL
+    def filename = untouchedUrl.substring(untouchedUrl.lastIndexOf('/') + 1)
+    def downloadDir = file(bundleTmpDownloadPath)
+    downloadDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    // Download if not already present
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        try {
+            // Download using Java URL connection
+            new URL(untouchedUrl).withInputStream { input ->
+                downloadedFile.withOutputStream { output ->
+                    def buffer = new byte[8192]
+                    def bytesRead
+                    while ((bytesRead = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, bytesRead)
+                    }
+                }
+            }
+            println "  Download complete from modules-untouched"
+        } catch (Exception e) {
+            throw new GradleException("""
+                Failed to download from modules-untouched: ${e.message}
+
+                Tried URL: ${untouchedUrl}
+
+                Please verify:
+                1. Version ${version} exists in modules-untouched repository
+                2. The URL is correct in mysql.properties or matches format: mysql-{version}-winx64.zip
+                3. You have internet connectivity
+            """.stripIndent())
+        }
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    return downloadedFile
+}
+
+// Function to find MySQL directory in extracted files
+def findMysqlDirectory(File extractPath) {
+    // Helper to detect mysqld.exe in a directory
+    def hasMysqldExe = { File dir ->
+        return new File(dir, 'bin/mysqld.exe').exists()
+    }
+
+    if (!extractPath?.exists()) {
+        return null
+    }
+
+    // Case 1: Files extracted directly into the root of extractPath
+    if (hasMysqldExe(extractPath)) {
+        return extractPath
+    }
+
+    // Case 2: Recursively search any depth for a directory that contains bin/mysqld.exe
+    File found = null
+
+    def stack = new ArrayDeque<File>()
+    extractPath.listFiles()?.findAll { it.isDirectory() }?.each { stack.push(it) }
+
+    while (!stack.isEmpty() && found == null) {
+        def dir = stack.pop()
+        if (hasMysqldExe(dir)) {
+            found = dir
+            break
+        }
+        dir.listFiles()?.findAll { it.isDirectory() }?.each { stack.push(it) }
+    }
+
+    return found
+}
+
+// Function to download and extract MySQL binaries
+def downloadAndExtractMysql(String version, File destDir) {
+    // Download from modules-untouched
+    def downloadedFile = downloadFromModulesUntouched(version, destDir)
+
+    // Extract the archive
+    def extractDir = file(bundleTmpExtractPath)
+    extractDir.mkdirs()
+    println "  Extracting archive..."
+    def extractPath = file("${extractDir}/${version}")
+    if (extractPath.exists()) {
+        delete extractPath
+    }
+    extractPath.mkdirs()
+
+    // Determine filename from downloaded file
+    def filename = downloadedFile.name
+
+    // Use 7zip or built-in extraction
+    if (filename.endsWith('.7z')) {
+        // Try to use 7zip if available
+        def sevenZipPath = find7ZipExecutable()
+        if (sevenZipPath) {
+            def command = [
+                sevenZipPath.toString(),
+                'x',
+                downloadedFile.absolutePath.toString(),
+                "-o${extractPath.absolutePath}".toString(),
+                '-y'
+            ]
+            def process = new ProcessBuilder(command as String[])
+                .directory(extractPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "    ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip extraction failed with exit code: ${exitCode}")
+            }
+        } else {
+            throw new GradleException("7zip not found. Please install 7zip or extract manually.")
+        }
+    } else if (filename.endsWith('.zip')) {
+        copy {
+            from zipTree(downloadedFile)
+            into extractPath
+        }
+    } else {
+        throw new GradleException("Unsupported archive format: ${filename}")
+    }
+
+    println "  Extraction complete"
+
+    // Find the MySQL directory in the extracted files
+    def mysqlDir = findMysqlDirectory(extractPath)
+    if (!mysqlDir) {
+        throw new GradleException("Could not find MySQL directory in extracted files")
+    }
+
+    println "  Found MySQL directory: ${mysqlDir.name}"
+
+    // Note about source
+    println ""
+    println "NOTE: Version ${version} was sourced from modules-untouched (or fallback URL)."
+
+    return mysqlDir
 }
 
 // ============================================================================
-// GRADLE NATIVE TASKS - Modern alternatives and enhancements
+// GRADLE NATIVE TASKS
 // ============================================================================
 
 // Task: Display build information
@@ -101,6 +322,7 @@ tasks.register('info') {
           Project Dir:  ${projectBasedir}
           Root Dir:     ${rootDir}
           Dev Path:     ${devPath}
+          Build Path:   ${mysqlBuildPath}
 
         Java:
           Version:      ${JavaVersion.current()}
@@ -112,85 +334,542 @@ tasks.register('info') {
 
         Available Task Groups:
           * build        - Build and package tasks
-          * ant tasks    - Legacy Ant tasks (prefixed with 'ant-')
           * help         - Help and information tasks
+          * verification - Verification and validation tasks
 
         Quick Start:
           gradle tasks                              - List all available tasks
           gradle info                               - Show this information
-          gradle release                            - Interactive release build
-          gradle release "-PbundleVersion=8.0.40"   - Non-interactive release
+          gradle release -PbundleVersion=8.0.40     - Build release for version
+          gradle releaseAll                         - Build all available versions
+          gradle listVersions                       - List versions in bin/
+          gradle listReleases                       - List releases from modules-untouched
           gradle clean                              - Clean build artifacts
           gradle verify                             - Verify build environment
         """.stripIndent()
     }
 }
 
-// Task: Main release task - supports both interactive and non-interactive modes
+// Task: Main release task - build release package for specific version
 tasks.register('release') {
     group = 'build'
-    description = 'Build release package (interactive or use -PbundleVersion=X.X.X for non-interactive)'
+    description = 'Build release package for a specific version (use -PbundleVersion=X.X.X or run interactively)'
 
-    // Ensure libraries are loaded first
-    dependsOn 'ant-load.lib'
+    // Capture property at configuration time
+    def versionProperty = project.findProperty('bundleVersion')
 
     doLast {
-        def versionToBuild = project.findProperty('bundleVersion')
+        def versionToBuild = versionProperty
 
-        if (versionToBuild) {
-            // Non-interactive mode with specified version
-            println "=".multiply(70)
-            println "Building release for ${bundleName} version ${versionToBuild}..."
-            println "=".multiply(70)
+        if (!versionToBuild) {
+            // Interactive mode - prompt for version
+            def availableVersions = getAvailableVersions()
 
-            def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
-
-            if (!bundlePath.exists()) {
-                def availableVersions = file("${projectDir}/bin").listFiles()
-                    .findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-                    .collect { "  - " + it.name.replace(bundleName, '') }
-                    .join('\n')
-
-                throw new GradleException("Bundle version not found: ${bundlePath}\n\nAvailable versions in bin/:\n${availableVersions}")
+            if (availableVersions.isEmpty()) {
+                throw new GradleException("No versions found in bin/ directory")
             }
 
-            println "Bundle path: ${bundlePath}"
+            println ""
+            println "=".multiply(70)
+            println "Interactive Release Mode"
+            println "=".multiply(70)
+            println ""
+            println "Available versions:"
+
+            // Show versions with location tags
+            def binDir = file("${projectDir}/bin")
+            def archivedDir = file("${projectDir}/bin/archived")
+
+            availableVersions.eachWithIndex { version, index ->
+                def location = ""
+                if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                    location = "[bin]"
+                } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                    location = "[bin/archived]"
+                }
+                println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
+            }
+            println ""
+            println "Enter version to build (index or version string):"
             println ""
 
-            // Execute Ant command directly to avoid Gradle Ant integration issues
-            def antCommand = ["cmd", "/c", "ant", "release", "-Dinput.bundle=${versionToBuild}"]
-            println "Executing: ant release -Dinput.bundle=${versionToBuild}"
-            println ""
+            // Read input using Gradle's standard input
+            def input = null
+            try {
+                def reader = new BufferedReader(new InputStreamReader(System.in))
+                input = reader.readLine()
+            } catch (Exception e) {
+                throw new GradleException("""
+                    Failed to read input. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
 
-            def process = antCommand.execute(null, projectDir)
-            process.consumeProcessOutput(System.out, System.err)
+                    Available versions: ${availableVersions.join(', ')}
+                """.stripIndent())
+            }
+
+            if (!input || input.trim().isEmpty()) {
+                throw new GradleException("""
+                    No version selected. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${availableVersions.join(', ')}
+                """.stripIndent())
+            }
+
+            def cleaned = input.trim()
+
+            // Accept either an index (1..N) or an explicit version string
+            if (cleaned.isInteger()) {
+                def idx = cleaned.toInteger()
+                if (idx < 1 || idx > availableVersions.size()) {
+                    throw new GradleException("""
+                        Invalid selection index: ${cleaned}
+
+                        Please choose a number between 1 and ${availableVersions.size()} or enter a version string.
+                    """.stripIndent())
+                }
+                versionToBuild = availableVersions[idx - 1]
+            } else {
+                versionToBuild = cleaned
+                // Validate the entered version string exists
+                if (!availableVersions.contains(versionToBuild)) {
+                    throw new GradleException("""
+                        Invalid version: ${versionToBuild}
+
+                        Please choose from available versions:
+                        ${availableVersions.collect { "  - ${it}" }.join('\n')}
+                    """.stripIndent())
+                }
+            }
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "Building release for ${bundleName} ${versionToBuild}"
+        println "=".multiply(70)
+        println ""
+
+        // Check if version exists in bin directory
+        def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
+
+        if (!bundlePath.exists()) {
+            // Check bin/archived subdirectory
+            def archivedPath = file("${projectDir}/bin/archived/${bundleName}${versionToBuild}")
+            if (archivedPath.exists()) {
+                bundlePath = archivedPath
+            } else {
+                def availableVersions = getAvailableVersions()
+                def versionList = availableVersions.isEmpty() ? "  (none found)" : availableVersions.collect { "  - ${it}" }.join('\n')
+
+                throw new GradleException("""
+                    Bundle version not found: ${bundleName}${versionToBuild}
+
+                    Available versions:
+                    ${versionList}
+
+                    To see all available versions, run:
+                      gradle listVersions
+                """.stripIndent())
+            }
+        }
+
+        println "Bundle path: ${bundlePath}"
+        println ""
+
+        // Get the bundle folder and version
+        def bundleFolder = bundlePath.name
+        def bundleVersion = bundleFolder.replace(bundleName, '')
+
+        // Determine source paths
+        def bundleSrcDest = bundlePath
+        def bundleSrcFinal = bundleSrcDest
+
+        // Check if mysqld.exe exists in bin/ directory
+        def mysqlExe = file("${bundleSrcFinal}/bin/mysqld.exe")
+        if (!mysqlExe.exists()) {
+            // MySQL binaries not found in bin/ - check if already downloaded to bearsampp-build/tmp
+            def tmpExtractPath = file("${bundleTmpExtractPath}/${bundleVersion}")
+            def tmpMysqlDir = findMysqlDirectory(tmpExtractPath)
+
+            if (tmpMysqlDir && tmpMysqlDir.exists()) {
+                println "Using cached MySQL binaries from bearsampp-build/tmp"
+                bundleSrcFinal = tmpMysqlDir
+            } else {
+                // Download and extract to bearsampp-build/tmp
+                println ""
+                println "MySQL binaries not found"
+                println "Downloading MySQL ${bundleVersion}..."
+                println ""
+
+                try {
+                    // Download and extract to bearsampp-build/tmp
+                    bundleSrcFinal = downloadAndExtractMysql(bundleVersion, file(bundleTmpExtractPath))
+                } catch (Exception e) {
+                    throw new GradleException("""
+                        Failed to download MySQL binaries: ${e.message}
+
+                        You can manually download and extract MySQL binaries to:
+                          ${bundleSrcDest}/
+
+                        Or check that version ${bundleVersion} exists in modules-untouched mysql.properties
+                    """.stripIndent())
+                }
+            }
+        }
+
+        // Verify mysqld.exe exists
+        mysqlExe = file("${bundleSrcFinal}/bin/mysqld.exe")
+        if (!mysqlExe.exists()) {
+            throw new GradleException("mysqld.exe not found at ${mysqlExe}")
+        }
+
+        println "Source folder: ${bundleSrcFinal}"
+        println ""
+
+        // Prepare output directory
+        def mysqlPrepPath = file("${bundleTmpPrepPath}/${bundleName}${bundleVersion}")
+        if (mysqlPrepPath.exists()) {
+            delete mysqlPrepPath
+        }
+        mysqlPrepPath.mkdirs()
+
+        // Copy MySQL binaries from extracted/downloaded location
+        println "Copying MySQL files..."
+        copy {
+            from bundleSrcFinal
+            into mysqlPrepPath
+        }
+
+        // Overlay files from bin bundle directory (bearsampp.conf, my.ini, etc.)
+        println "Overlaying bundle files from bin directory..."
+        copy {
+            from bundleSrcDest
+            into mysqlPrepPath
+        }
+
+        println ""
+        println "Copying to bundles_build directory..."
+        def mysqlBuildPath = file("${bundleTmpBuildPath}/${bundleName}${bundleVersion}")
+        if (mysqlBuildPath.exists()) {
+            delete mysqlBuildPath
+        }
+        mysqlBuildPath.mkdirs()
+
+        copy {
+            from mysqlPrepPath
+            into mysqlBuildPath
+        }
+        println "Non-zip version available at: ${mysqlBuildPath}"
+
+        println ""
+        println "Preparing archive..."
+
+        // Determine build output path following Apache pattern
+        // bearsampp-build/bins/mysql/{bundleRelease} for bins
+        // bearsampp-build/tools/mysql/{bundleRelease} for tools
+        def buildPath = file(buildBasePath)
+        def buildBinsPath = file("${buildPath}/${bundleType}/${bundleName}/${bundleRelease}")
+        buildBinsPath.mkdirs()
+
+        // Build archive filename
+        def destFile = file("${buildBinsPath}/bearsampp-${bundleName}-${bundleVersion}-${bundleRelease}")
+
+        // Compress based on format
+        def archiveFile = file("${destFile}.${bundleFormat}")
+
+        println "  Format: ${bundleFormat}"
+        println "  Output: ${archiveFile}"
+
+        if (bundleFormat == '7z') {
+            // 7z format
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
+
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            // Find 7z executable
+            def sevenZipExe = find7ZipExecutable()
+            if (!sevenZipExe) {
+                throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
+            }
+
+            // Create 7z archive
+            def command = [
+                sevenZipExe,
+                'a',
+                '-t7z',
+                archiveFile.absolutePath.toString(),
+                '.'
+            ]
+
+            def process = new ProcessBuilder(command as String[])
+                .directory(mysqlPrepPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "  ${line}"
+            }
+
             def exitCode = process.waitFor()
-
             if (exitCode != 0) {
-                throw new GradleException("Ant release failed with exit code: ${exitCode}")
+                throw new GradleException("7-Zip compression failed with exit code: ${exitCode}")
             }
 
-            println ""
-            println "=".multiply(70)
-            println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
-            println "=".multiply(70)
+            println "Archive created: ${archiveFile}"
         } else {
-            // Interactive mode - call Ant release target which will prompt for input
-            println "=".multiply(70)
-            println "Starting interactive release build..."
-            println "You will be prompted to enter the bundle version."
-            println "=".multiply(70)
-            println ""
+            // zip format
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
 
-            // Call the imported ant-release target for interactive mode
-            tasks.getByName('ant-release').actions.each { action ->
-                action.execute(tasks.getByName('ant-release'))
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            task("zipArchive_${bundleVersion}", type: Zip) {
+                from mysqlPrepPath
+                destinationDirectory = archiveFile.parentFile
+                archiveFileName = archiveFile.name
+            }.execute()
+
+            println "Archive created: ${archiveFile}"
+        }
+
+        // Generate hash files
+        println "Generating hash files..."
+        generateHashFiles(archiveFile)
+
+        println ""
+        println "=".multiply(70)
+        println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
+        println "Output directory: ${mysqlBuildPath}"
+        println "Archive: ${destFile}.${bundleFormat}"
+        println "=".multiply(70)
+    }
+}
+
+// Helper function to find 7-Zip executable
+def find7ZipExecutable() {
+    // Check environment variable
+    def sevenZipHome = System.getenv('7Z_HOME')
+    if (sevenZipHome) {
+        def exe = file("${sevenZipHome}/7z.exe")
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Check common installation paths
+    def commonPaths = [
+        'C:/Program Files/7-Zip/7z.exe',
+        'C:/Program Files (x86)/7-Zip/7z.exe',
+        'D:/Program Files/7-Zip/7z.exe',
+        'D:/Program Files (x86)/7-Zip/7z.exe'
+    ]
+
+    for (path in commonPaths) {
+        def exe = file(path)
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Try to find in PATH
+    try {
+        def process = ['where', '7z.exe'].execute()
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            def output = process.text.trim()
+            if (output) {
+                return output.split('\n')[0].trim()
+            }
+        }
+    } catch (Exception e) {
+        // Ignore
+    }
+
+    return null
+}
+
+// Helper function to generate hash files
+def generateHashFiles(File file) {
+    if (!file.exists()) {
+        throw new GradleException("File not found for hashing: ${file}")
+    }
+
+    // Generate MD5
+    def md5File = new File("${file.absolutePath}.md5")
+    def md5Hash = calculateHash(file, 'MD5')
+    md5File.text = "${md5Hash} ${file.name}\n"
+    println "  Created: ${md5File.name}"
+
+    // Generate SHA1
+    def sha1File = new File("${file.absolutePath}.sha1")
+    def sha1Hash = calculateHash(file, 'SHA-1')
+    sha1File.text = "${sha1Hash} ${file.name}\n"
+    println "  Created: ${sha1File.name}"
+
+    // Generate SHA256
+    def sha256File = new File("${file.absolutePath}.sha256")
+    def sha256Hash = calculateHash(file, 'SHA-256')
+    sha256File.text = "${sha256Hash} ${file.name}\n"
+    println "  Created: ${sha256File.name}"
+
+    // Generate SHA512
+    def sha512File = new File("${file.absolutePath}.sha512")
+    def sha512Hash = calculateHash(file, 'SHA-512')
+    sha512File.text = "${sha512Hash} ${file.name}\n"
+    println "  Created: ${sha512File.name}"
+}
+
+// Helper function to calculate hash
+def calculateHash(File file, String algorithm) {
+    def digest = java.security.MessageDigest.getInstance(algorithm)
+    file.withInputStream { stream ->
+        def buffer = new byte[8192]
+        def bytesRead
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    return digest.digest().collect { String.format('%02x', it) }.join('')
+}
+
+// Helper function to get available versions
+def getAvailableVersions() {
+    def versions = []
+
+    // Check bin directory
+    def binDir = file("${projectDir}/bin")
+    if (binDir.exists()) {
+        def binVersions = binDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) && it.name != 'archived' }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(binVersions)
+    }
+
+    // Check bin/archived subdirectory
+    def archivedDir = file("${projectDir}/bin/archived")
+    if (archivedDir.exists()) {
+        def archivedVersions = archivedDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(archivedVersions)
+    }
+
+    // Remove duplicates and sort
+    return versions.unique().sort()
+}
+
+// Task: Build all available versions
+tasks.register('releaseAll') {
+    group = 'build'
+    description = 'Build release packages for all available versions in bin/ directory'
+
+    doLast {
+        def binDir = file("${projectDir}/bin")
+        if (!binDir.exists()) {
+            throw new GradleException("bin/ directory not found")
+        }
+
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            throw new GradleException("No versions found in bin/ directory")
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "Building releases for ${versions.size()} ${bundleName} versions"
+        println "=".multiply(70)
+        println ""
+
+        def successCount = 0
+        def failedVersions = []
+
+        versions.each { version ->
+            println "=".multiply(70)
+            println "[${successCount + 1}/${versions.size()}] Building ${bundleName} ${version}..."
+            println "=".multiply(70)
+
+            try {
+                // Call the release task logic for this version
+                def bundlePath = file("${projectDir}/bin/${bundleName}${version}")
+
+                if (!bundlePath.exists()) {
+                    throw new GradleException("Bundle path not found: ${bundlePath}")
+                }
+
+                println "Bundle path: ${bundlePath}"
+                println ""
+
+                // Get the bundle folder and version
+                def bundleFolder = bundlePath.name
+                def bundleVersion = bundleFolder.replace(bundleName, '')
+
+                // Determine source paths
+                def bundleSrcDest = bundlePath
+                def bundleSrcFinal = bundleSrcDest
+
+                // Check if mysqld.exe exists
+                def mysqlExe = file("${bundleSrcFinal}/bin/mysqld.exe")
+                if (!mysqlExe.exists()) {
+                    throw new GradleException("mysqld.exe not found at ${mysqlExe}")
+                }
+
+                println "Source folder: ${bundleSrcFinal}"
+                println ""
+
+                // Prepare output directory
+                def mysqlPrepPath = file("${mysqlTmpPrepPath}/${bundleName}${bundleVersion}")
+                if (mysqlPrepPath.exists()) {
+                    delete mysqlPrepPath
+                }
+                mysqlPrepPath.mkdirs()
+
+                // Copy MySQL files
+                println "Copying MySQL files..."
+                copy {
+                    from bundleSrcDest
+                    into mysqlPrepPath
+                }
+
+                println ""
+                println "[SUCCESS] ${bundleName} ${version} completed"
+                println "Output: ${mysqlPrepPath}"
+                successCount++
+
+            } catch (Exception e) {
+                println ""
+                println "[FAILED] ${bundleName} ${version}: ${e.message}"
+                failedVersions.add(version)
             }
 
             println ""
-            println "=".multiply(70)
-            println "[SUCCESS] Release build completed"
-            println "=".multiply(70)
+        }
+
+        // Summary
+        println "=".multiply(70)
+        println "Build Summary"
+        println "=".multiply(70)
+        println "Total versions: ${versions.size()}"
+        println "Successful:     ${successCount}"
+        println "Failed:         ${failedVersions.size()}"
+
+        if (!failedVersions.isEmpty()) {
+            println ""
+            println "Failed versions:"
+            failedVersions.each { v ->
+                println "  - ${v}"
+            }
+        }
+
+        println "=".multiply(70)
+
+        if (failedVersions.isEmpty()) {
+            println "[SUCCESS] All versions built successfully!"
+        } else {
+            throw new GradleException("${failedVersions.size()} version(s) failed to build")
         }
     }
 }
@@ -205,20 +884,6 @@ tasks.named('clean') {
         def buildDir = file("${projectDir}/build")
         if (buildDir.exists()) {
             delete buildDir
-        }
-
-        // Clean any temporary directories that might be created
-        // Use manual directory traversal to avoid fileTree default excludes issue
-        def tmpDirs = []
-        projectDir.eachFileRecurse { file ->
-            if (file.isDirectory() && (file.name == 'tmp' || file.name == '.tmp')) {
-                tmpDirs.add(file)
-            }
-        }
-        tmpDirs.each { dir ->
-            if (dir.exists()) {
-                delete dir
-            }
         }
 
         println "[SUCCESS] Build artifacts cleaned"
@@ -240,14 +905,18 @@ tasks.register('verify') {
         checks['Java 8+'] = javaVersion >= JavaVersion.VERSION_1_8
 
         // Check required files
-        checks['build.xml'] = file('build.xml').exists()
         checks['build.properties'] = file('build.properties').exists()
-        checks['releases.properties'] = file('releases.properties').exists()
 
-        // Check dev directory and required build files
+        // Check dev directory
         checks['dev directory'] = file(devPath).exists()
-        checks['build-commons.xml'] = file("${devPath}/build/build-commons.xml").exists()
-        checks['build-bundle.xml'] = file("${devPath}/build/build-bundle.xml").exists()
+
+        // Check bin directory
+        checks['bin directory'] = file("${projectDir}/bin").exists()
+
+        // Check 7-Zip if format is 7z
+        if (bundleFormat == '7z') {
+            checks['7-Zip'] = find7ZipExecutable() != null
+        }
 
         println "\nEnvironment Check Results:"
         println "-".multiply(60)
@@ -261,8 +930,8 @@ tasks.register('verify') {
         if (allPassed) {
             println "\n[SUCCESS] All checks passed! Build environment is ready."
             println "\nYou can now run:"
-            println "  gradle release                            - Interactive release"
-            println "  gradle release \"-PbundleVersion=8.0.40\"   - Non-interactive release"
+            println "  gradle release -PbundleVersion=8.0.40   - Build release for version"
+            println "  gradle listVersions                     - List available versions"
         } else {
             println "\n[WARNING] Some checks failed. Please review the requirements."
             throw new GradleException("Build environment verification failed")
@@ -270,57 +939,65 @@ tasks.register('verify') {
     }
 }
 
-// Task: List all bundle versions from releases.properties
+// Task: List all bundle versions from modules-untouched mysql.properties
 tasks.register('listReleases') {
     group = 'help'
-    description = 'List all available releases from releases.properties'
+    description = 'List all available releases from modules-untouched mysql.properties'
 
     doLast {
-        def releasesFile = file('releases.properties')
-        if (!releasesFile.exists()) {
-            println "releases.properties not found"
+        def props = fetchModulesUntouchedProperties()
+        if (!props) {
+            println "\n[WARNING] Could not fetch modules-untouched mysql.properties."
+            println "No release information available."
             return
         }
 
-        def releases = new Properties()
-        releasesFile.withInputStream { releases.load(it) }
-
-        println "\nAvailable MySQL Releases:"
+        println "\nAvailable MySQL Releases (modules-untouched):"
         println "-".multiply(80)
-        releases.sort { it.key }.each { version, url ->
+        props.sort { a, b -> a.key <=> b.key }.each { version, url ->
             println "  ${version.padRight(10)} -> ${url}"
         }
         println "-".multiply(80)
-        println "Total releases: ${releases.size()}"
+        println "Total releases: ${props.size()}"
     }
 }
 
-// Task: List available bundle versions in bin directory
+// Task: List available bundle versions in bin and bin/archived directories
 tasks.register('listVersions') {
     group = 'help'
-    description = 'List all available bundle versions in bin/ directory'
+    description = 'List all available bundle versions in bin/ and bin/archived/ directories'
 
     doLast {
-        def binDir = file("${projectDir}/bin")
-        if (!binDir.exists()) {
-            println "bin/ directory not found"
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            println "\nNo versions found in bin/ or bin/archived/ directories"
             return
         }
 
-        def versions = binDir.listFiles()
-            .findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-            .collect { it.name.replace(bundleName, '') }
-            .sort()
-
-        println "\nAvailable ${bundleName} versions in bin/:"
+        println "\nAvailable ${bundleName} versions:"
         println "-".multiply(60)
+
+        // Show which directory each version is in
+        def binDir = file("${projectDir}/bin")
+        def archivedDir = file("${projectDir}/bin/archived")
+
         versions.each { version ->
-            println "  ${version}"
+            def location = ""
+            if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                location = "[bin]"
+            } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                location = "[bin/archived]"
+            }
+            println "  ${version.padRight(15)} ${location}"
         }
         println "-".multiply(60)
         println "Total versions: ${versions.size()}"
-        println "\nTo build a specific version:"
-        println "  gradle release \"-PbundleVersion=${versions.last()}\""
+
+        if (!versions.isEmpty()) {
+            println "\nTo build a specific version:"
+            println "  gradle release -PbundleVersion=${versions.last()}"
+        }
     }
 }
 
@@ -356,6 +1033,79 @@ tasks.register('validateProperties') {
     }
 }
 
+// Task: Check modules-untouched integration
+tasks.register('checkModulesUntouched') {
+    group = 'verification'
+    description = 'Check modules-untouched repository integration and available versions'
+
+    doLast {
+        println ""
+        println "=".multiply(70)
+        println "Modules-Untouched Integration Check"
+        println "=".multiply(70)
+        println ""
+
+        def propsUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/mysql.properties"
+        println "Repository URL:"
+        println "  ${propsUrl}"
+        println ""
+
+        println "Fetching mysql.properties from modules-untouched..."
+        def untouchedProps = fetchModulesUntouchedProperties()
+
+        if (untouchedProps) {
+            println ""
+            println "=".multiply(70)
+            println "Available Versions in modules-untouched"
+            println "=".multiply(70)
+
+            def sortedVersions = untouchedProps.sort { a, b ->
+                // Simple version comparison
+                def aParts = a.key.tokenize('.')
+                def bParts = b.key.tokenize('.')
+                for (int i = 0; i < Math.min(aParts.size(), bParts.size()); i++) {
+                    def aNum = aParts[i].toInteger()
+                    def bNum = bParts[i].toInteger()
+                    if (aNum != bNum) return aNum <=> bNum
+                }
+                return aParts.size() <=> bParts.size()
+            }
+
+            sortedVersions.each { version, url ->
+                println "  ${version.padRight(10)}"
+            }
+
+            println "=".multiply(70)
+            println "Total versions: ${untouchedProps.size()}"
+            println ""
+
+            println ""
+            println "=".multiply(70)
+            println "[SUCCESS] modules-untouched integration is working"
+            println "=".multiply(70)
+            println ""
+            println "Version Resolution Strategy:"
+            println "  1. Check modules-untouched mysql.properties (remote)"
+            println "  2. Construct standard URL format (fallback)"
+            println ""
+
+        } else {
+            println ""
+            println "=".multiply(70)
+            println "[WARNING] Could not fetch mysql.properties from modules-untouched"
+            println "=".multiply(70)
+            println ""
+            println "This may be due to:"
+            println "  - Network connectivity issues"
+            println "  - Repository access problems"
+            println "  - File not available at expected location"
+            println ""
+            println "The build system will fall back to:"
+            println "  1. Standard URL format construction"
+        }
+    }
+}
+
 // ============================================================================
 // BUILD LIFECYCLE HOOKS
 // ============================================================================
@@ -363,7 +1113,7 @@ tasks.register('validateProperties') {
 gradle.taskGraph.whenReady { graph ->
     println """
     ================================================================
-      Bearsampp Module MySQL - Gradle + Ant Hybrid Build
+      Bearsampp Module MySQL - Gradle Build
     ================================================================
     """.stripIndent()
 }
