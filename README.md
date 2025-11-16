@@ -13,6 +13,10 @@ https://bearsampp.com/module/mysql
 
 This module uses Gradle for building release packages. The build system provides modern features including caching, incremental builds, and integration with the modules-untouched repository.
 
+Important: Ant is no longer supported
+- The legacy Ant build has been fully deprecated and disabled.
+- Use the Gradle tasks documented below. Attempting to run the old Ant launch/build will fail with a deprecation message.
+
 ### Prerequisites
 
 - **Java 8+** - Required for running Gradle
@@ -48,6 +52,13 @@ gradle releaseAll
 
 # Clean build artifacts
 gradle clean
+```
+
+If you are on Windows with the Gradle Wrapper, you can use:
+
+```
+gradlew.bat release
+gradlew.bat release -PbundleVersion=9.4.0
 ```
 
 ### Build Configuration
@@ -96,6 +107,16 @@ build/
 │   ├── mysql8.0.40.7z.sha256   # SHA256 hash
 │   └── mysql8.0.40.7z.sha512   # SHA512 hash
 └── tmp/                         # Temporary build files
+```
+
+Inside the archive, the files are contained within a single top-level folder that includes the MySQL version, matching the behavior used across Bearsampp modules (e.g., module-bruno). Example:
+
+```
+mysql8.0.40/                 # Top-level folder included in the archive
+├── bin/
+├── data/
+├── ...
+└── bearsampp.conf
 ```
 
 ### Modules-Untouched Integration
