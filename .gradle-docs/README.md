@@ -451,8 +451,7 @@ For issues and questions:
 
 **Last Updated**: 2025-01-31  
 **Version**: 2025.8.21  
-**Build System**: Pure Gradle (no wrapper, no Ant)
+**Build System**: Pure Gradle
 
 Notes:
-- This project deliberately does not ship the Gradle Wrapper. Install Gradle 7+ locally and run with `gradle ...`.
 - Legacy Ant files (e.g., Eclipse `.launch` referencing `build.xml`) are deprecated and not used by the build.
