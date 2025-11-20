@@ -13,15 +13,5 @@
 # ignore "current" directories
 /**/current
 
-.qodo
-
 # Qodo
 /.qodo
-
-# Gradle
-.gradle/
-build/
-.gradle-cache/
-gradle-app.setting
-!gradle-wrapper.jar
-!gradle-wrapper.properties
