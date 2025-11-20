@@ -1,0 +1,251 @@
+name: Validate Properties Links
+
+# This workflow validates all URLs in modified .properties files when a PR is created or edited
+# Works for both modules/*.properties and releases.properties files
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+    paths:
+      - 'modules/*.properties'
+      - 'releases.properties'
+
+jobs:
+  validate-links:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests
+      
+      - name: Get changed properties files
+        id: changed_files
+        run: |
+          # Get list of changed .properties files
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD | grep '\.properties$' || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No properties files changed"
+            echo "files=" >> $GITHUB_OUTPUT
+          else
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+            # Convert to comma-separated list
+            FILES_LIST=$(echo "$CHANGED_FILES" | tr '\n' ',' | sed 's/,$//')
+            echo "files=$FILES_LIST" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Validate all links in properties files
+        if: steps.changed_files.outputs.files != ''
+        env:
+          CHANGED_FILES: ${{ steps.changed_files.outputs.files }}
+        run: |
+          python << 'EOF'
+          import os
+          import sys
+          import requests
+          from urllib.parse import urlparse
+          import time
+          
+          # Get changed files
+          changed_files = os.environ.get('CHANGED_FILES', '').split(',')
+          changed_files = [f.strip() for f in changed_files if f.strip()]
+          
+          if not changed_files:
+              print("No properties files to validate")
+              sys.exit(0)
+          
+          print(f"Validating {len(changed_files)} properties file(s)...\n")
+          
+          all_valid = True
+          total_urls = 0
+          valid_urls = 0
+          invalid_urls = []
+          
+          for properties_file in changed_files:
+              if not os.path.exists(properties_file):
+                  print(f"⚠️  File not found: {properties_file}")
+                  continue
+              
+              print(f"📄 Checking: {properties_file}")
+              print("-" * 80)
+              
+              with open(properties_file, 'r', encoding='utf-8') as f:
+                  lines = f.readlines()
+              
+              file_urls = []
+              for line_num, line in enumerate(lines, 1):
+                  line = line.strip()
+                  
+                  # Skip comments and empty lines
+                  if not line or line.startswith('#'):
+                      continue
+                  
+                  # Parse property line
+                  if '=' in line:
+                      key, value = line.split('=', 1)
+                      url = value.strip()
+                      
+                      # Check if it's a URL
+                      if url.startswith('http://') or url.startswith('https://'):
+                          file_urls.append({
+                              'line': line_num,
+                              'key': key.strip(),
+                              'url': url
+                          })
+              
+              print(f"Found {len(file_urls)} URL(s) to validate\n")
+              
+              # Validate each URL
+              for item in file_urls:
+                  total_urls += 1
+                  url = item['url']
+                  key = item['key']
+                  line = item['line']
+                  
+                  try:
+                      # Send HEAD request first (faster)
+                      response = requests.head(url, timeout=10, allow_redirects=True)
+                      
+                      # If HEAD fails, try GET
+                      if response.status_code >= 400:
+                          response = requests.get(url, timeout=10, allow_redirects=True, stream=True)
+                      
+                      if response.status_code == 200:
+                          print(f"✅ Line {line}: {key}")
+                          print(f"   URL: {url}")
+                          print(f"   Status: {response.status_code} OK")
+                          valid_urls += 1
+                      else:
+                          print(f"❌ Line {line}: {key}")
+                          print(f"   URL: {url}")
+                          print(f"   Status: {response.status_code} {response.reason}")
+                          invalid_urls.append({
+                              'file': properties_file,
+                              'line': line,
+                              'key': key,
+                              'url': url,
+                              'status': response.status_code,
+                              'reason': response.reason
+                          })
+                          all_valid = False
+                      
+                  except requests.exceptions.Timeout:
+                      print(f"⏱️  Line {line}: {key}")
+                      print(f"   URL: {url}")
+                      print(f"   Error: Request timeout (>10s)")
+                      invalid_urls.append({
+                          'file': properties_file,
+                          'line': line,
+                          'key': key,
+                          'url': url,
+                          'status': 'TIMEOUT',
+                          'reason': 'Request timeout'
+                      })
+                      all_valid = False
+                      
+                  except requests.exceptions.RequestException as e:
+                      print(f"❌ Line {line}: {key}")
+                      print(f"   URL: {url}")
+                      print(f"   Error: {str(e)}")
+                      invalid_urls.append({
+                          'file': properties_file,
+                          'line': line,
+                          'key': key,
+                          'url': url,
+                          'status': 'ERROR',
+                          'reason': str(e)
+                      })
+                      all_valid = False
+                  
+                  print()
+                  
+                  # Small delay to avoid rate limiting
+                  time.sleep(0.5)
+              
+              print()
+          
+          # Summary
+          print("=" * 80)
+          print("VALIDATION SUMMARY")
+          print("=" * 80)
+          print(f"Total URLs checked: {total_urls}")
+          print(f"Valid URLs: {valid_urls}")
+          print(f"Invalid URLs: {len(invalid_urls)}")
+          print()
+          
+          if invalid_urls:
+              print("❌ INVALID URLS FOUND:")
+              print("-" * 80)
+              for item in invalid_urls:
+                  print(f"\nFile: {item['file']}")
+                  print(f"Line: {item['line']}")
+                  print(f"Key: {item['key']}")
+                  print(f"URL: {item['url']}")
+                  print(f"Status: {item['status']} - {item['reason']}")
+              print()
+              print("=" * 80)
+              print("❌ VALIDATION FAILED - Please fix the invalid URLs above")
+              print("=" * 80)
+              sys.exit(1)
+          else:
+              print("=" * 80)
+              print("✅ ALL URLS ARE VALID")
+              print("=" * 80)
+              sys.exit(0)
+          
+          EOF
+      
+      - name: Comment on PR with validation results
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            // Create a comment on the PR
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ❌ Link Validation Failed
+              
+              Some URLs in the modified properties files are not accessible. Please check the workflow logs for details.
+              
+              **Action Required:**
+              - Review the invalid URLs listed in the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+              - Fix or remove the invalid URLs
+              - Push the changes to trigger a new validation
+              
+              The PR cannot be merged until all URLs are valid.`
+            });
+      
+      - name: Comment on PR with success
+        if: success() && steps.changed_files.outputs.files != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ✅ Link Validation Passed
+              
+              All URLs in the modified properties files have been validated and are accessible.
+              
+              This PR is ready for review and merge.`
+            });
