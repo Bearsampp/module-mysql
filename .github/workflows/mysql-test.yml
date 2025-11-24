@@ -72,10 +72,11 @@ jobs:
                 jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
             fi
           elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            # For PRs, detect which versions were added or modified using GitHub API
+            # Smart Version Detection for Pull Requests
+            echo "=== Smart Version Detection ==="
             echo "Detecting versions changed in PR #${{ github.event.pull_request.number }}"
 
-            # Get the list of changed files first
+            # Get the list of changed files from PR
             echo "Fetching changed files from PR..."
             CHANGED_FILES=$(curl -s -H "Authorization: token ${{ github.token }}" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -85,46 +86,49 @@ jobs:
             echo "Changed files in PR:"
             echo "$CHANGED_FILES"
 
-            # Check if releases.properties was changed
-            if echo "$CHANGED_FILES" | grep -q "^releases.properties$"; then
-              echo "releases.properties was modified in this PR"
+            # PRIMARY METHOD: Extract versions from /bin directory changes
+            echo ""
+            echo "🔍 Primary Method: Checking /bin directory for version changes..."
+            BIN_VERSIONS=$(echo "$CHANGED_FILES" | \
+              grep "^bin/" | \
+              grep -v "^bin/archived/" | \
+              sed 's|^bin/mysql||' | \
+              sed 's|/.*||' | \
+              grep -E '^[0-9]+\.[0-9]+' | \
+              sort -u)
 
-              # Get the diff from GitHub API using curl
-              PATCH=$(curl -s -H "Authorization: token ${{ github.token }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
-                jq -r '.[] | select(.filename == "releases.properties") | .patch')
+            if [ -n "$BIN_VERSIONS" ]; then
+              echo "✅ Versions detected from /bin directory changes:"
+              echo "$BIN_VERSIONS"
 
-              echo "Analyzing diff for added/modified versions..."
+              # Verify these versions exist in releases.properties
+              VALID_VERSIONS=""
+              while IFS= read -r version; do
+                if [ -n "$version" ]; then
+                  if grep -q "^${version}\s*=" releases.properties; then
+                    echo "  ✓ Version $version exists in releases.properties"
+                    VALID_VERSIONS="${VALID_VERSIONS}${version}"$'\n'
+                  else
+                    echo "  ⚠️  Version $version found in /bin but not in releases.properties"
+                  fi
+                fi
+              done <<< "$BIN_VERSIONS"
 
-              # Extract ALL added lines (lines starting with +) that contain version numbers
-              # Test ALL versions added in the PR (including RC/beta/alpha)
-              CHANGED_VERSIONS=$(echo "$PATCH" | \
-                grep "^+" | \
-                grep -v "^+++" | \
-                grep -E "^\+[0-9]+\.[0-9]+" | \
-                sed 's/^+//' | \
-                cut -d'=' -f1 | \
-                tr -d ' ')
-
-              if [ -z "$CHANGED_VERSIONS" ]; then
-                echo "No new versions found in releases.properties changes"
-                echo "Testing latest 5 versions as fallback"
-                VERSIONS=$(grep -E "^[0-9]+\.[0-9]+" releases.properties | \
-                  cut -d'=' -f1 | \
-                  tr -d ' ' | \
-                  sort -V -r | \
-                  head -5 | \
-                  jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+              if [ -n "$VALID_VERSIONS" ]; then
+                VERSIONS=$(echo "$VALID_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+                echo "✅ Testing versions from /bin directory: $VERSIONS"
               else
-                echo "Versions detected in PR:"
-                echo "$CHANGED_VERSIONS"
-                VERSIONS=$(echo "$CHANGED_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+                echo "⚠️  No valid versions found in /bin directory"
+                BIN_VERSIONS=""
               fi
             else
-              echo "releases.properties was NOT modified in this PR"
+              echo "ℹ️  No version changes detected in /bin directory"
+            fi
 
-              # Try to extract version from PR title
+            # FALLBACK METHOD: Extract versions from PR title (only if no /bin versions found)
+            if [ -z "$BIN_VERSIONS" ]; then
+              echo ""
+              echo "🔍 Fallback Method: Checking PR title for version numbers..."
               PR_TITLE="${{ github.event.pull_request.title }}"
               echo "PR Title: $PR_TITLE"
 
@@ -132,32 +136,45 @@ jobs:
               TITLE_VERSIONS=$(echo "$PR_TITLE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+|[0-9]+\.[0-9]+' | head -5)
 
               if [ -n "$TITLE_VERSIONS" ]; then
-                echo "Versions found in PR title:"
+                echo "✅ Versions found in PR title:"
                 echo "$TITLE_VERSIONS"
 
                 # Verify these versions exist in releases.properties
                 VALID_VERSIONS=""
                 while IFS= read -r version; do
-                  if grep -q "^${version}\s*=" releases.properties; then
-                    echo "  ✓ Version $version exists in releases.properties"
-                    VALID_VERSIONS="${VALID_VERSIONS}${version}"$'\n'
-                  else
-                    echo "  ✗ Version $version not found in releases.properties"
+                  if [ -n "$version" ]; then
+                    if grep -q "^${version}\s*=" releases.properties; then
+                      echo "  ✓ Version $version exists in releases.properties"
+                      VALID_VERSIONS="${VALID_VERSIONS}${version}"$'\n'
+                    else
+                      echo "  ✗ Version $version not found in releases.properties"
+                    fi
                   fi
                 done <<< "$TITLE_VERSIONS"
 
                 if [ -n "$VALID_VERSIONS" ]; then
                   VERSIONS=$(echo "$VALID_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
-                  echo "Testing versions from PR title: $VERSIONS"
+                  echo "✅ Testing versions from PR title: $VERSIONS"
                 else
-                  echo "No valid versions found in PR title"
-                  VERSIONS="[]"
+                  echo "⚠️  No valid versions found in PR title"
+                  TITLE_VERSIONS=""
                 fi
               else
-                echo "No version numbers found in PR title"
-                echo "Skipping tests - no versions to test"
-                VERSIONS="[]"
+                echo "ℹ️  No version numbers found in PR title"
               fi
+            fi
+
+            # FINAL FALLBACK: Test latest 5 versions if no versions detected
+            if [ -z "$BIN_VERSIONS" ] && [ -z "$TITLE_VERSIONS" ]; then
+              echo ""
+              echo "🔍 Final Fallback: Testing latest 5 versions from releases.properties"
+              VERSIONS=$(grep -E "^[0-9]+\.[0-9]+" releases.properties | \
+                cut -d'=' -f1 | \
+                tr -d ' ' | \
+                sort -V -r | \
+                head -5 | \
+                jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+              echo "✅ Testing latest 5 versions: $VERSIONS"
             fi
           else
             # For other events, test latest 5 versions
@@ -171,7 +188,8 @@ jobs:
           fi
 
           echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
-          echo "Versions to test: $VERSIONS"
+          echo ""
+          echo "=== Final versions to test: $VERSIONS ==="
 
   test-mysql:
     name: Test MySQL ${{ matrix.version }}

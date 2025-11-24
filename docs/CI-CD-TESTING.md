@@ -17,11 +17,22 @@ The MySQL testing workflow is triggered automatically on:
 The workflow intelligently determines which versions to test based on the context:
 
 ### Pull Request Testing
-- **Smart Detection**: Automatically detects which MySQL versions were added or modified in the PR
-- **Targeted Testing**: Only tests the versions that changed in `releases.properties`
+
+- **Smart Detection**: Automatically detects which MySQL versions are included in the PR from pre-release
+  - **Primary Method**: Extracts version numbers from changed files in `/bin` directory (e.g., `bin/mysql8.4.6/`, `bin/mysql9.4.0/`)
+  - **Fallback Method**: If no versions found in `/bin`, extracts version numbers from PR title
+  - **Final Fallback**: If no versions detected by either method, tests the latest 5 versions
 - **Efficiency**: Reduces CI runtime by testing only relevant versions
-- **Fallback**: If no version changes detected, tests the latest 5 versions
 - **Comprehensive**: Tests all versions including RC (Release Candidate), beta, and alpha versions
+
+**How it works:**
+
+1. New versions are created and added to a pre-release (tagged with date, e.g., "2025.01.23")
+2. Version directories are created in `/bin` (e.g., `bin/mysql8.4.6/`, `bin/mysql9.4.0/`)
+3. The `releases.properties` file is updated via the releases.properties workflow
+4. A PR is created from a release branch (e.g., "January") to `main`
+5. This workflow detects changed files in `/bin` and extracts version numbers from directory names
+6. Tests are run against the version(s) found in `releases.properties` from that PR branch
 
 ### Manual Testing
 - **Latest 5 Versions**: Tests the 5 most recent versions from `releases.properties`
@@ -29,8 +40,8 @@ The workflow intelligently determines which versions to test based on the contex
 - **Flexibility**: Useful for re-testing or validating specific versions
 
 ### Example Scenarios
-- **Add MySQL 9.5.0**: Only version 9.5.0 is tested
-- **Add versions 8.4.7 and 9.5.0**: Both versions are tested
+- **Add MySQL 9.4.0**: Only version 9.4.0 is tested
+- **Add versions 8.4.6 and 9.4.0**: Both versions are tested
 - **Modify existing version URL**: That specific version is tested
 - **Non-version changes**: Latest 5 versions tested as fallback
 
