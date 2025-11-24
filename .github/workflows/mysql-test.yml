@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - develop
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
     inputs:
@@ -75,29 +74,29 @@ jobs:
           elif [ "${{ github.event_name }}" == "pull_request" ]; then
             # For PRs, detect which versions were added or modified using GitHub API
             echo "Detecting versions changed in PR #${{ github.event.pull_request.number }}"
-            
+
             # Get the list of changed files first
             echo "Fetching changed files from PR..."
             CHANGED_FILES=$(curl -s -H "Authorization: token ${{ github.token }}" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
               jq -r '.[].filename')
-            
+
             echo "Changed files in PR:"
             echo "$CHANGED_FILES"
-            
+
             # Check if releases.properties was changed
             if echo "$CHANGED_FILES" | grep -q "^releases.properties$"; then
               echo "releases.properties was modified in this PR"
-              
+
               # Get the diff from GitHub API using curl
               PATCH=$(curl -s -H "Authorization: token ${{ github.token }}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
                 jq -r '.[] | select(.filename == "releases.properties") | .patch')
-              
+
               echo "Analyzing diff for added/modified versions..."
-              
+
               # Extract ALL added lines (lines starting with +) that contain version numbers
               # Test ALL versions added in the PR (including RC/beta/alpha)
               CHANGED_VERSIONS=$(echo "$PATCH" | \
@@ -107,7 +106,7 @@ jobs:
                 sed 's/^+//' | \
                 cut -d'=' -f1 | \
                 tr -d ' ')
-              
+
               if [ -z "$CHANGED_VERSIONS" ]; then
                 echo "No new versions found in releases.properties changes"
                 echo "Testing latest 5 versions as fallback"
@@ -124,18 +123,18 @@ jobs:
               fi
             else
               echo "releases.properties was NOT modified in this PR"
-              
+
               # Try to extract version from PR title
               PR_TITLE="${{ github.event.pull_request.title }}"
               echo "PR Title: $PR_TITLE"
-              
+
               # Extract version numbers from title (e.g., "9.5.0", "8.4.7", "8.0.44")
               TITLE_VERSIONS=$(echo "$PR_TITLE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+|[0-9]+\.[0-9]+' | head -5)
-              
+
               if [ -n "$TITLE_VERSIONS" ]; then
                 echo "Versions found in PR title:"
                 echo "$TITLE_VERSIONS"
-                
+
                 # Verify these versions exist in releases.properties
                 VALID_VERSIONS=""
                 while IFS= read -r version; do
@@ -146,7 +145,7 @@ jobs:
                     echo "  ✗ Version $version not found in releases.properties"
                   fi
                 done <<< "$TITLE_VERSIONS"
-                
+
                 if [ -n "$VALID_VERSIONS" ]; then
                   VERSIONS=$(echo "$VALID_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
                   echo "Testing versions from PR title: $VERSIONS"
@@ -170,7 +169,7 @@ jobs:
               head -5 | \
               jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
           fi
-          
+
           echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
           echo "Versions to test: $VERSIONS"
 
@@ -183,7 +182,7 @@ jobs:
       fail-fast: false
       matrix:
         version: ${{ fromJson(needs.detect-versions.outputs.versions) }}
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -201,13 +200,13 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           $version = "${{ matrix.version }}"
-          
+
           Write-Host "=== Phase 1.1: Download MySQL $version ==="
-          
+
           # Read releases.properties to get download URL
           $releasesFile = "releases.properties"
           $downloadUrl = ""
-          
+
           if (Test-Path $releasesFile) {
             $content = Get-Content $releasesFile
             foreach ($line in $content) {
@@ -222,7 +221,7 @@ jobs:
             echo "error=releases.properties file not found" >> $env:GITHUB_OUTPUT
             exit 1
           }
-          
+
           if (-not $downloadUrl) {
             Write-Host "❌ ERROR: Version $version not found in releases.properties"
             Write-Host "Available versions in releases.properties:"
@@ -231,16 +230,16 @@ jobs:
             echo "error=Version $version not found in releases.properties" >> $env:GITHUB_OUTPUT
             exit 1
           }
-          
+
           Write-Host "Download URL: $downloadUrl"
-          
+
           try {
             $fileName = [System.IO.Path]::GetFileName($downloadUrl)
             $downloadPath = Join-Path "test-mysql" $fileName
-            
+
             Write-Host "Downloading MySQL $version..."
             Write-Host "Target file: $downloadPath"
-            
+
             try {
               Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing -TimeoutSec 300
             } catch {
@@ -252,11 +251,11 @@ jobs:
               echo "error=Download failed: $($_.Exception.Message)" >> $env:GITHUB_OUTPUT
               exit 1
             }
-            
+
             if (Test-Path $downloadPath) {
               $fileSize = (Get-Item $downloadPath).Length / 1MB
               Write-Host "✅ Downloaded: $fileName ($([math]::Round($fileSize, 2)) MB)"
-              
+
               # Verify file is not empty or too small
               if ($fileSize -lt 0.1) {
                 Write-Host "❌ ERROR: Downloaded file is too small ($([math]::Round($fileSize, 2)) MB), likely corrupted"
@@ -264,25 +263,25 @@ jobs:
                 echo "error=Downloaded file is too small or corrupted" >> $env:GITHUB_OUTPUT
                 exit 1
               }
-              
+
               # Extract the archive
               Write-Host "Extracting archive..."
               $extractOutput = & 7z x $downloadPath -o"test-mysql" -y 2>&1
-              
+
               if ($LASTEXITCODE -eq 0) {
                 Write-Host "✅ Extraction successful"
-                
+
                 # List extracted contents
                 Write-Host "Extracted contents:"
                 Get-ChildItem -Path "test-mysql" -Directory | ForEach-Object { Write-Host "  - $($_.Name)" }
-                
+
                 # Find the mysql directory
                 $mysqlDir = Get-ChildItem -Path "test-mysql" -Directory | Where-Object { $_.Name -match "^mysql" } | Select-Object -First 1
-                
+
                 if ($mysqlDir) {
                   $mysqlPath = $mysqlDir.FullName
                   Write-Host "✅ MySQL directory found: $mysqlPath"
-                  
+
                   # Verify bin directory exists
                   $binPath = Join-Path $mysqlPath "bin"
                   if (Test-Path $binPath) {
@@ -336,16 +335,16 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           $mysqlPath = "${{ steps.download-mysql.outputs.mysql-path }}"
-          
+
           Write-Host "=== Phase 1.2: Verify MySQL Installation ==="
-          
+
           # Check for required executables
           $binPath = Join-Path $mysqlPath "bin"
           $requiredExes = @("mysqld.exe", "mysql.exe", "mysqladmin.exe", "mysqldump.exe")
-          
+
           $allFound = $true
           $verifyResults = @{}
-          
+
           foreach ($exe in $requiredExes) {
             $exePath = Join-Path $binPath $exe
             if (Test-Path $exePath) {
@@ -357,7 +356,7 @@ jobs:
               $allFound = $false
             }
           }
-          
+
           # Test mysqld version
           if ($allFound) {
             try {
@@ -369,9 +368,9 @@ jobs:
               Write-Host "⚠️  Could not get version: $_"
             }
           }
-          
+
           $verifyResults | ConvertTo-Json -Depth 10 | Out-File "test-results/verify.json"
-          
+
           if ($allFound) {
             echo "success=true" >> $env:GITHUB_OUTPUT
             echo "bin-path=$binPath" >> $env:GITHUB_OUTPUT
@@ -387,15 +386,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binPath = "${{ steps.verify-mysql.outputs.bin-path }}"
-          
+
           Write-Host "=== Phase 2: Test Basic Functionality ==="
-          
+
           # Test that executables can run and show version
           try {
             $mysqldExe = Join-Path $binPath "mysqld.exe"
             $mysqlExe = Join-Path $binPath "mysql.exe"
             $mysqladminExe = Join-Path $binPath "mysqladmin.exe"
-            
+
             $allFunctional = $true
             $testResults = @()
 
@@ -476,26 +475,26 @@ jobs:
         if: always()
         run: |
           $version = "${{ matrix.version }}"
-          
+
           Write-Host "`n=== Test Summary for MySQL $version ==="
-          
+
           $phase1_1 = "${{ steps.download-mysql.outputs.success }}" -eq "true"
           $phase1_2 = "${{ steps.verify-mysql.outputs.success }}" -eq "true"
           $phase2 = "${{ steps.test-basic.outputs.success }}" -eq "true"
-          
+
           # Get error messages if any
           $error1_1 = "${{ steps.download-mysql.outputs.error }}"
           $error2 = "${{ steps.test-basic.outputs.error }}"
-          
+
           $summary = "### MySQL $version`n`n"
-          
+
           $summary += "**Phase 1: Installation Validation**`n"
           $summary += "- Download & Extract: $(if ($phase1_1) { '✅ PASS' } else { '❌ FAIL' })`n"
           if (-not $phase1_1 -and $error1_1) {
             $summary += "  - Error: $error1_1`n"
           }
           $summary += "- Verify Executables: $(if ($phase1_2) { '✅ PASS' } else { '❌ FAIL' })`n`n"
-          
+
           if ($phase1_2) {
             $summary += "**Phase 2: Basic Functionality**`n"
             $summary += "- Test Executables: $(if ($phase2) { '✅ PASS' } else { '❌ FAIL' })`n"
@@ -504,10 +503,10 @@ jobs:
             }
             $summary += "`n"
           }
-          
+
           # Overall status
           $allPassed = $phase1_1 -and $phase1_2 -and $phase2
-          
+
           if ($allPassed) {
             $summary += "**Overall Status:** ✅ ALL TESTS PASSED`n"
           } else {
@@ -521,10 +520,10 @@ jobs:
             $summary += "- Ensure all required DLL dependencies are included`n"
             $summary += "</details>`n"
           }
-          
+
           Write-Host $summary
           $summary | Out-File "test-results/summary.md"
-          
+
           # Set job outcome based on test results
           if (-not $allPassed) {
             Write-Host "##[error]Tests failed for MySQL $version"
@@ -556,11 +555,11 @@ jobs:
           echo "## 🐬 MySQL Module Tests - Results" > comment.md
           echo "" >> comment.md
           echo "**Test Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> comment.md
-          
+
           # Determine overall test status
           TEST_STATUS="${{ needs.test-mysql.result }}"
           VERSIONS='${{ needs.detect-versions.outputs.versions }}'
-          
+
           if [ "$TEST_STATUS" = "skipped" ] || [ "$VERSIONS" = "[]" ]; then
             echo "**Status:** ⏭️ Tests skipped - no versions to test" >> comment.md
             echo "" >> comment.md
@@ -581,21 +580,21 @@ jobs:
           else
             echo "**Status:** ⚠️ Tests completed with issues" >> comment.md
           fi
-          
+
           echo "" >> comment.md
-          
+
           # Generate badges for each version
           if [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
             echo "### 📊 Test Results by Version" >> comment.md
             echo "" >> comment.md
-            
+
             # Parse versions and check results
             VERSION_LIST=$(echo '${{ needs.detect-versions.outputs.versions }}' | jq -r '.[]')
-            
+
             for version in $VERSION_LIST; do
               # Check if summary file exists for this version
               SUMMARY_FILE="all-results/test-results-mysql-${version}/summary.md"
-              
+
               if [ -f "$SUMMARY_FILE" ]; then
                 # Check if tests passed by looking for "ALL TESTS PASSED" in summary
                 if grep -q "ALL TESTS PASSED" "$SUMMARY_FILE"; then
@@ -610,21 +609,21 @@ jobs:
                 echo "![MySQL ${version}](https://img.shields.io/badge/MySQL_${version}-NO_RESULTS-inactive?style=flat-square&logo=mysql&logoColor=white)" >> comment.md
               fi
             done
-            
+
             echo "" >> comment.md
           fi
-          
+
           echo "" >> comment.md
-          
+
           # Check if artifacts exist
           if [ -d "all-results" ]; then
             # Count expected vs actual results
             EXPECTED_COUNT=$(echo '${{ needs.detect-versions.outputs.versions }}' | jq '. | length')
             ACTUAL_COUNT=$(find all-results -name "summary.md" 2>/dev/null | wc -l)
-            
+
             echo "**Results:** $ACTUAL_COUNT of $EXPECTED_COUNT versions tested" >> comment.md
             echo "" >> comment.md
-            
+
             # Check if there are any failures
             HAS_FAILURES=false
             for version_dir in all-results/test-results-mysql-*; do
@@ -639,12 +638,12 @@ jobs:
                 done
               fi
             done
-            
+
             # Only show detailed results if there are failures
             if [ "$HAS_FAILURES" = true ]; then
               echo "### 📋 Detailed Test Results" >> comment.md
               echo "" >> comment.md
-              
+
               for version_dir in all-results/test-results-mysql-*; do
                 if [ -d "$version_dir" ]; then
                   for summary_file in "$version_dir"/summary.md; do
@@ -663,7 +662,7 @@ jobs:
             echo "⚠️ No test results available" >> comment.md
             echo "" >> comment.md
           fi
-          
+
           if [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
             echo "---" >> comment.md
             echo "" >> comment.md
@@ -675,7 +674,7 @@ jobs:
             echo "" >> comment.md
             echo "_Check artifacts for detailed logs._" >> comment.md
           fi
-          
+
           cat comment.md
 
       - name: Comment on PR
@@ -685,18 +684,18 @@ jobs:
           script: |
             const fs = require('fs');
             const comment = fs.readFileSync('comment.md', 'utf8');
-            
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
               comment.body.includes('🐬 MySQL Module Tests')
             );
-            
+
             if (botComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -712,7 +711,7 @@ jobs:
                 body: comment
               });
             }
-      
+
       - name: Display Results Summary (Manual Run)
         if: github.event_name == 'workflow_dispatch'
         run: |
