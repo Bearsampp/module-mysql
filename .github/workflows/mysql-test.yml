@@ -34,11 +34,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set Run Trigger
+      - name: Check for Changes
         id: check-changes
         run: |
-          echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "Workflow triggered by ${{ github.event_name }} - will run tests"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            echo "Manual workflow trigger - will run tests"
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            echo "Pull request - will run tests"
+          else
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+            if echo "$CHANGED_FILES" | grep -qE "releases\.properties|\.github/workflows/mysql-test\.yml"; then
+              echo "has-changes=true" >> $GITHUB_OUTPUT
+              echo "Relevant files changed - will run tests"
+            else
+              echo "has-changes=false" >> $GITHUB_OUTPUT
+              echo "No relevant changes - skipping tests"
+            fi
+          fi
 
       - name: Get MySQL Versions
         id: get-versions
@@ -338,7 +352,7 @@ jobs:
         if: steps.verify-mysql.outputs.success == 'true'
         continue-on-error: true
         run: |
-          $ErrorActionPreference = "Continue"
+          $ErrorActionPreference = "Stop"
           $binPath = "${{ steps.verify-mysql.outputs.bin-path }}"
           
           Write-Host "=== Phase 2: Test Basic Functionality ==="
@@ -350,18 +364,64 @@ jobs:
             $mysqladminExe = Join-Path $binPath "mysqladmin.exe"
             
             $allFunctional = $true
+            $testResults = @()
 
             Write-Host "`nTesting mysqld.exe --version..."
-            & $mysqldExe --version 2>&1 | Out-String | Write-Host
-            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysqld.exe failed" }
+            try {
+              $mysqldVersion = & $mysqldExe --version 2>&1
+              Write-Host $mysqldVersion
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ mysqld.exe is functional"
+                $testResults += "mysqld: PASS"
+              } else {
+                Write-Host "❌ mysqld.exe failed with exit code: $LASTEXITCODE"
+                $allFunctional = $false
+                $testResults += "mysqld: FAIL"
+              }
+            } catch {
+              Write-Host "❌ mysqld.exe error: $_"
+              $allFunctional = $false
+              $testResults += "mysqld: ERROR"
+            }
 
             Write-Host "`nTesting mysql.exe --version..."
-            & $mysqlExe --version 2>&1 | Out-String | Write-Host
-            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysql.exe failed" }
+            try {
+              $mysqlVersion = & $mysqlExe --version 2>&1
+              Write-Host $mysqlVersion
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ mysql.exe is functional"
+                $testResults += "mysql: PASS"
+              } else {
+                Write-Host "❌ mysql.exe failed with exit code: $LASTEXITCODE"
+                $allFunctional = $false
+                $testResults += "mysql: FAIL"
+              }
+            } catch {
+              Write-Host "❌ mysql.exe error: $_"
+              $allFunctional = $false
+              $testResults += "mysql: ERROR"
+            }
 
             Write-Host "`nTesting mysqladmin.exe --version..."
-            & $mysqladminExe --version 2>&1 | Out-String | Write-Host
-            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysqladmin.exe failed" }
+            try {
+              $mysqladminVersion = & $mysqladminExe --version 2>&1
+              Write-Host $mysqladminVersion
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ mysqladmin.exe is functional"
+                $testResults += "mysqladmin: PASS"
+              } else {
+                Write-Host "❌ mysqladmin.exe failed with exit code: $LASTEXITCODE"
+                $allFunctional = $false
+                $testResults += "mysqladmin: FAIL"
+              }
+            } catch {
+              Write-Host "❌ mysqladmin.exe error: $_"
+              $allFunctional = $false
+              $testResults += "mysqladmin: ERROR"
+            }
+
+            Write-Host "`nTest Results:"
+            $testResults | ForEach-Object { Write-Host "  $_" }
 
             if ($allFunctional) {
               Write-Host "`n✅ All executables are functional"
@@ -369,11 +429,13 @@ jobs:
             } else {
               Write-Host "`n❌ Some executables failed"
               echo "success=false" >> $env:GITHUB_OUTPUT
+              echo "error=One or more executables failed version test" >> $env:GITHUB_OUTPUT
               exit 1
             }
           } catch {
             Write-Host "❌ Error testing executables: $_"
             echo "success=false" >> $env:GITHUB_OUTPUT
+            echo "error=$($_.Exception.Message)" >> $env:GITHUB_OUTPUT
             exit 1
           }
 
@@ -390,6 +452,7 @@ jobs:
           
           # Get error messages if any
           $error1_1 = "${{ steps.download-mysql.outputs.error }}"
+          $error2 = "${{ steps.test-basic.outputs.error }}"
           
           $summary = "### MySQL $version`n`n"
           
@@ -402,7 +465,11 @@ jobs:
           
           if ($phase1_2) {
             $summary += "**Phase 2: Basic Functionality**`n"
-            $summary += "- Test Executables: $(if ($phase2) { '✅ PASS' } else { '❌ FAIL' })`n`n"
+            $summary += "- Test Executables: $(if ($phase2) { '✅ PASS' } else { '❌ FAIL' })`n"
+            if (-not $phase2 -and $error2) {
+              $summary += "  - Error: $error2`n"
+            }
+            $summary += "`n"
           }
           
           # Overall status
@@ -424,6 +491,12 @@ jobs:
           
           Write-Host $summary
           $summary | Out-File "test-results/summary.md"
+          
+          # Set job outcome based on test results
+          if (-not $allPassed) {
+            Write-Host "##[error]Tests failed for MySQL $version"
+            exit 1
+          }
 
       - name: Upload Test Results
         if: always()
