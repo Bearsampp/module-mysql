@@ -33,6 +33,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Get releases.properties from main branch
+        run: |
+          # Fetch releases.properties from main branch if it doesn't exist in current branch
+          if [ ! -f "releases.properties" ]; then
+            echo "releases.properties not found in current branch, fetching from main..."
+            git fetch origin main:main
+            git checkout main -- releases.properties || echo "Could not fetch releases.properties from main"
+          fi
+
       - name: Check for Changes
         id: check-changes
         run: |
@@ -204,6 +213,26 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get releases.properties from main branch
+        shell: pwsh
+        run: |
+          # Fetch releases.properties from main branch if it doesn't exist in current branch
+          if (-not (Test-Path "releases.properties")) {
+            Write-Host "releases.properties not found in current branch, fetching from main..."
+            git fetch origin main
+            git show origin/main:releases.properties > releases.properties
+            if (Test-Path "releases.properties") {
+              Write-Host "✅ Successfully fetched releases.properties from main"
+              Get-Content releases.properties | Select-Object -First 5
+            } else {
+              Write-Host "❌ Could not fetch releases.properties from main"
+            }
+          } else {
+            Write-Host "✅ releases.properties found in current branch"
+          }
 
       - name: Create Test Directories
         run: |
@@ -215,6 +244,8 @@ jobs:
       - name: Phase 1.1 - Download MySQL
         id: download-mysql
         continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           $ErrorActionPreference = "Continue"
           $version = "${{ matrix.version }}"
@@ -259,12 +290,28 @@ jobs:
             Write-Host "Target file: $downloadPath"
 
             try {
-              Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing -TimeoutSec 300
+              # Try download with GitHub token for authentication (helps with pre-releases)
+              $headers = @{}
+              if ($env:GITHUB_TOKEN) {
+                $headers["Authorization"] = "token $env:GITHUB_TOKEN"
+                Write-Host "Using GitHub token for authentication"
+              }
+              
+              Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -Headers $headers -UseBasicParsing -TimeoutSec 300 -MaximumRedirection 5
             } catch {
               Write-Host "❌ ERROR: Download failed!"
               Write-Host "Error details: $($_.Exception.Message)"
-              Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
+              if ($_.Exception.Response) {
+                Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
+                Write-Host "Status Description: $($_.Exception.Response.StatusDescription)"
+              }
               Write-Host "URL attempted: $downloadUrl"
+              
+              # Try to get more details about the error
+              if ($_.ErrorDetails) {
+                Write-Host "Error Details: $($_.ErrorDetails.Message)"
+              }
+              
               echo "success=false" >> $env:GITHUB_OUTPUT
               echo "error=Download failed: $($_.Exception.Message)" >> $env:GITHUB_OUTPUT
               exit 1
