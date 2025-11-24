@@ -34,25 +34,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for Changes
+      - name: Set Run Trigger
         id: check-changes
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "has-changes=true" >> $GITHUB_OUTPUT
-            echo "Manual workflow trigger - will run tests"
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "has-changes=true" >> $GITHUB_OUTPUT
-            echo "Pull request - will run tests"
-          else
-            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
-            if echo "$CHANGED_FILES" | grep -qE "releases\.properties|\.github/workflows/mysql-test\.yml"; then
-              echo "has-changes=true" >> $GITHUB_OUTPUT
-              echo "Relevant files changed - will run tests"
-            else
-              echo "has-changes=false" >> $GITHUB_OUTPUT
-              echo "No relevant changes - skipping tests"
-            fi
-          fi
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "Workflow triggered by ${{ github.event_name }} - will run tests"
 
       - name: Get MySQL Versions
         id: get-versions
