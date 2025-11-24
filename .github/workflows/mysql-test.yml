@@ -124,8 +124,41 @@ jobs:
               fi
             else
               echo "releases.properties was NOT modified in this PR"
-              echo "Skipping tests - no versions to test"
-              VERSIONS="[]"
+              
+              # Try to extract version from PR title
+              PR_TITLE="${{ github.event.pull_request.title }}"
+              echo "PR Title: $PR_TITLE"
+              
+              # Extract version numbers from title (e.g., "9.5.0", "8.4.7", "8.0.44")
+              TITLE_VERSIONS=$(echo "$PR_TITLE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+|[0-9]+\.[0-9]+' | head -5)
+              
+              if [ -n "$TITLE_VERSIONS" ]; then
+                echo "Versions found in PR title:"
+                echo "$TITLE_VERSIONS"
+                
+                # Verify these versions exist in releases.properties
+                VALID_VERSIONS=""
+                while IFS= read -r version; do
+                  if grep -q "^${version}\s*=" releases.properties; then
+                    echo "  ✓ Version $version exists in releases.properties"
+                    VALID_VERSIONS="${VALID_VERSIONS}${version}"$'\n'
+                  else
+                    echo "  ✗ Version $version not found in releases.properties"
+                  fi
+                done <<< "$TITLE_VERSIONS"
+                
+                if [ -n "$VALID_VERSIONS" ]; then
+                  VERSIONS=$(echo "$VALID_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+                  echo "Testing versions from PR title: $VERSIONS"
+                else
+                  echo "No valid versions found in PR title"
+                  VERSIONS="[]"
+                fi
+              else
+                echo "No version numbers found in PR title"
+                echo "Skipping tests - no versions to test"
+                VERSIONS="[]"
+              fi
             fi
           else
             # For other events, test latest 5 versions
@@ -509,7 +542,7 @@ jobs:
   report-results:
     name: Report Test Results
     needs: [detect-versions, test-mysql]
-    if: always() && needs.detect-versions.outputs.has-changes == 'true' && needs.test-mysql.result != 'cancelled'
+    if: always() && needs.detect-versions.outputs.has-changes == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download all test results
@@ -526,12 +559,59 @@ jobs:
           
           # Determine overall test status
           TEST_STATUS="${{ needs.test-mysql.result }}"
-          if [ "$TEST_STATUS" = "success" ]; then
+          VERSIONS='${{ needs.detect-versions.outputs.versions }}'
+          
+          if [ "$TEST_STATUS" = "skipped" ] || [ "$VERSIONS" = "[]" ]; then
+            echo "**Status:** ⏭️ Tests skipped - no versions to test" >> comment.md
+            echo "" >> comment.md
+            echo "ℹ️ **Why were tests skipped?**" >> comment.md
+            echo "" >> comment.md
+            echo "Tests are only run when:" >> comment.md
+            echo "- \`releases.properties\` is modified with new/updated versions, OR" >> comment.md
+            echo "- PR title contains version numbers (e.g., \"9.5.0\", \"8.4.7\") that exist in \`releases.properties\`" >> comment.md
+            echo "" >> comment.md
+            echo "**To trigger tests:**" >> comment.md
+            echo "1. Add version numbers to your PR title (e.g., \"Update docs for MySQL 9.5.0\")" >> comment.md
+            echo "2. Or modify \`releases.properties\` to add/update versions" >> comment.md
+            echo "3. Or manually trigger the workflow from the Actions tab" >> comment.md
+          elif [ "$TEST_STATUS" = "success" ]; then
             echo "**Status:** ✅ All tests passed" >> comment.md
           elif [ "$TEST_STATUS" = "failure" ]; then
             echo "**Status:** ❌ Some tests failed" >> comment.md
           else
             echo "**Status:** ⚠️ Tests completed with issues" >> comment.md
+          fi
+          
+          echo "" >> comment.md
+          
+          # Generate badges for each version
+          if [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
+            echo "### 📊 Test Results by Version" >> comment.md
+            echo "" >> comment.md
+            
+            # Parse versions and check results
+            VERSION_LIST=$(echo '${{ needs.detect-versions.outputs.versions }}' | jq -r '.[]')
+            
+            for version in $VERSION_LIST; do
+              # Check if summary file exists for this version
+              SUMMARY_FILE="all-results/test-results-mysql-${version}/summary.md"
+              
+              if [ -f "$SUMMARY_FILE" ]; then
+                # Check if tests passed by looking for "ALL TESTS PASSED" in summary
+                if grep -q "ALL TESTS PASSED" "$SUMMARY_FILE"; then
+                  # Success badge (green)
+                  echo "![MySQL ${version}](https://img.shields.io/badge/MySQL_${version}-PASS-success?style=flat-square&logo=mysql&logoColor=white)" >> comment.md
+                else
+                  # Failure badge (red)
+                  echo "![MySQL ${version}](https://img.shields.io/badge/MySQL_${version}-FAIL-critical?style=flat-square&logo=mysql&logoColor=white)" >> comment.md
+                fi
+              else
+                # No results badge (gray)
+                echo "![MySQL ${version}](https://img.shields.io/badge/MySQL_${version}-NO_RESULTS-inactive?style=flat-square&logo=mysql&logoColor=white)" >> comment.md
+              fi
+            done
+            
+            echo "" >> comment.md
           fi
           
           echo "" >> comment.md
@@ -555,20 +635,22 @@ jobs:
                 done
               fi
             done
-          else
+          elif [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
             echo "⚠️ No test results available" >> comment.md
             echo "" >> comment.md
           fi
           
-          echo "---" >> comment.md
-          echo "" >> comment.md
-          echo "### 📋 Test Phases" >> comment.md
-          echo "" >> comment.md
-          echo "Each version is tested through the following phases:" >> comment.md
-          echo "- **Phase 1:** Installation Validation (Download, Extract, Verify Executables)" >> comment.md
-          echo "- **Phase 2:** Basic Functionality (Test Executable Versions)" >> comment.md
-          echo "" >> comment.md
-          echo "_Check artifacts for detailed logs._" >> comment.md
+          if [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
+            echo "---" >> comment.md
+            echo "" >> comment.md
+            echo "### 📋 Test Phases" >> comment.md
+            echo "" >> comment.md
+            echo "Each version is tested through the following phases:" >> comment.md
+            echo "- **Phase 1:** Installation Validation (Download, Extract, Verify Executables)" >> comment.md
+            echo "- **Phase 2:** Basic Functionality (Test Executable Versions)" >> comment.md
+            echo "" >> comment.md
+            echo "_Check artifacts for detailed logs._" >> comment.md
+          fi
           
           cat comment.md
 
