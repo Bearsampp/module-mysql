@@ -625,16 +625,40 @@ jobs:
             echo "**Results:** $ACTUAL_COUNT of $EXPECTED_COUNT versions tested" >> comment.md
             echo "" >> comment.md
             
+            # Check if there are any failures
+            HAS_FAILURES=false
             for version_dir in all-results/test-results-mysql-*; do
               if [ -d "$version_dir" ]; then
                 for summary_file in "$version_dir"/summary.md; do
                   if [ -f "$summary_file" ]; then
-                    cat "$summary_file" >> comment.md
-                    echo "" >> comment.md
+                    if ! grep -q "ALL TESTS PASSED" "$summary_file"; then
+                      HAS_FAILURES=true
+                      break 2
+                    fi
                   fi
                 done
               fi
             done
+            
+            # Only show detailed results if there are failures
+            if [ "$HAS_FAILURES" = true ]; then
+              echo "### 📋 Detailed Test Results" >> comment.md
+              echo "" >> comment.md
+              
+              for version_dir in all-results/test-results-mysql-*; do
+                if [ -d "$version_dir" ]; then
+                  for summary_file in "$version_dir"/summary.md; do
+                    if [ -f "$summary_file" ]; then
+                      cat "$summary_file" >> comment.md
+                      echo "" >> comment.md
+                    fi
+                  done
+                fi
+              done
+            else
+              echo "_All tests passed successfully! ✨_" >> comment.md
+              echo "" >> comment.md
+            fi
           elif [ "$TEST_STATUS" != "skipped" ] && [ "$VERSIONS" != "[]" ]; then
             echo "⚠️ No test results available" >> comment.md
             echo "" >> comment.md
