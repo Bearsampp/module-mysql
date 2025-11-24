@@ -363,19 +363,21 @@ jobs:
             $mysqlExe = Join-Path $binPath "mysql.exe"
             $mysqladminExe = Join-Path $binPath "mysqladmin.exe"
             
+            $allFunctional = $true
+
             Write-Host "`nTesting mysqld.exe --version..."
-            $mysqldVersion = & $mysqldExe --version 2>&1 | Out-String
-            Write-Host $mysqldVersion
-            
+            & $mysqldExe --version 2>&1 | Out-String | Write-Host
+            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysqld.exe failed" }
+
             Write-Host "`nTesting mysql.exe --version..."
-            $mysqlVersion = & $mysqlExe --version 2>&1 | Out-String
-            Write-Host $mysqlVersion
-            
+            & $mysqlExe --version 2>&1 | Out-String | Write-Host
+            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysql.exe failed" }
+
             Write-Host "`nTesting mysqladmin.exe --version..."
-            $mysqladminVersion = & $mysqladminExe --version 2>&1 | Out-String
-            Write-Host $mysqladminVersion
-            
-            if ($LASTEXITCODE -eq 0) {
+            & $mysqladminExe --version 2>&1 | Out-String | Write-Host
+            if ($LASTEXITCODE -ne 0) { $allFunctional = $false; Write-Host "❌ mysqladmin.exe failed" }
+
+            if ($allFunctional) {
               Write-Host "`n✅ All executables are functional"
               echo "success=true" >> $env:GITHUB_OUTPUT
             } else {
