@@ -105,6 +105,11 @@ jobs:
 
           # Extract assets that end with .7z only
           assets = []
+          
+          # Special handling for modules where filename prefix differs from module name
+          # For apache: files start with "httpd" instead of "apache"
+          filename_prefix = 'httpd' if module_name == 'apache' else module_name
+          
           for asset in release_data.get('assets', []):
               filename = asset['name']
 
@@ -112,12 +117,12 @@ jobs:
               if filename.endswith('.7z'):
                   download_url = asset['browser_download_url']
 
-                  # Extract version number after module name (e.g., "bearsampp-postgresql-18.1-2025.7.2.7z" -> "18.1")
-                  # Pattern: module_name followed by version, then either a dash+date or .7z
-                  # Supports: 18.1, 17.2.3, 3.2.1.0, 17.0-RC1
+                  # Extract version number after filename prefix (e.g., "bearsampp-httpd-2.4.62-2025.7.2.7z" -> "2.4.62")
+                  # Pattern: filename_prefix followed by version, then either a dash+date or .7z
+                  # Supports: 18.1, 17.2.3, 3.2.1.0, 17.0-RC1, 2.4.62
                   # The (?=-\d{4}\.|\.7z) ensures we stop before a date pattern or .7z extension
                   version_match = re.search(
-                      rf'{module_name}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.|-\d{{4}}\d{{2}}\.|\.\d+z|$)',
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.|-\d{{4}}\d{{2}}\.|\.\d+z|$)',
                       filename,
                       re.IGNORECASE
                   )
@@ -169,9 +174,10 @@ jobs:
           fixed_properties = OrderedDict()
           for key, url in properties.items():
               # Try to extract the correct version from the URL
-              # URL format: .../bearsampp-postgresql-18.1-2025.7.2.7z
+              # URL format: .../bearsampp-httpd-2.4.62-2025.7.2.7z (for apache)
+              # URL format: .../bearsampp-postgresql-18.1-2025.7.2.7z (for other modules)
               url_version_match = re.search(
-                  rf'{module_name}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.|-\d{{4}}\d{{2}}\.|\.\d+z|/|$)',
+                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.|-\d{{4}}\d{{2}}\.|\.\d+z|/|$)',
                   url,
                   re.IGNORECASE
               )
