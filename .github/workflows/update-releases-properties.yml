@@ -106,8 +106,8 @@ jobs:
           # Extract assets that end with .7z only
           assets = []
           
-          # Use module name directly as the filename prefix
-          filename_prefix = module_name
+          # Use bearsampp-module format as the filename prefix (e.g., "bearsampp-postgresql")
+          filename_prefix = f"bearsampp-{module_name}"
           
           print(f"Looking for .7z files with prefix: {filename_prefix}")
           print(f"Available assets:")
@@ -126,7 +126,7 @@ jobs:
                   # Supports: 18.1, 17.2.3, 3.2.1.0, 17.0-RC1, 2.4.62
                   # The lookahead ensures we stop before a date pattern or .7z extension
                   version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.\d{{1,2}}\.\d{{1,2}}|\.\d+z|$)',
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
                       filename,
                       re.IGNORECASE
                   )
@@ -184,7 +184,7 @@ jobs:
               # URL format: .../bearsampp-apache-2.4.66-2025.12.8.7z (for apache)
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
               url_version_match = re.search(
-                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.\d{{1,2}}\.\d{{1,2}}|\.\d+z|/|$)',
+                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-\d{{4}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
                   url,
                   re.IGNORECASE
               )
