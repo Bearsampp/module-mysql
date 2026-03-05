@@ -17,6 +17,8 @@ on:
 jobs:
   update-properties:
     runs-on: ubuntu-latest
+    # Skip execution if running in .settings repository
+    if: ${{ !endsWith(github.repository, '.settings') }}
 
     steps:
       - name: Checkout repository
