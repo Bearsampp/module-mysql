@@ -213,8 +213,17 @@ jobs:
 
               # Create property key (just version number)
               key = ver
-              properties[key] = url
-              print(f"Added/Updated: {key} = {url}")
+              if key in properties:
+                  if properties[key] == url:
+                      print(f"Skipped (URL unchanged): {key} = {url}")
+                  else:
+                      print(f"Updated URL: {key}")
+                      print(f"  Old: {properties[key]}")
+                      print(f"  New: {url}")
+                      properties[key] = url
+              else:
+                  properties[key] = url
+                  print(f"Added: {key} = {url}")
 
           # Sort properties by version (semver)
           def extract_version(key):
