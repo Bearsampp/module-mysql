@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     # Skip execution if running in .settings repository
     if: ${{ !endsWith(github.repository, '.settings') }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
@@ -255,7 +257,7 @@ jobs:
 
       - name: Create Pull Request
         id: create_pr
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GH_PAT }}
           base: main
