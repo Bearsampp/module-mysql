@@ -765,21 +765,8 @@ def getAvailableVersions() {
         versions.addAll(archivedVersions)
     }
 
-    // Remove duplicates and sort semantically
-    return versions.unique().sort { a, b ->
-        def aParts = a.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
-        def bParts = b.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
-        for (int i = 0; i < Math.max(aParts.size(), bParts.size()); i++) {
-            def aVal = i < aParts.size() ? aParts[i] : 0
-            def bVal = i < bParts.size() ? bParts[i] : 0
-            if (aVal.getClass() != bVal.getClass()) {
-                aVal = aVal.toString()
-                bVal = bVal.toString()
-            }
-            if (aVal != bVal) return aVal <=> bVal
-        }
-        return 0
-    }
+    // Remove duplicates and sort
+    return versions.unique().sort()
 }
 
 // Task: Build all available versions
@@ -1081,18 +1068,15 @@ tasks.register('checkModulesUntouched') {
             println "=".multiply(70)
 
             def sortedVersions = untouchedProps.sort { a, b ->
-                def aParts = a.key.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
-                def bParts = b.key.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
-                for (int i = 0; i < Math.max(aParts.size(), bParts.size()); i++) {
-                    def aVal = i < aParts.size() ? aParts[i] : 0
-                    def bVal = i < bParts.size() ? bParts[i] : 0
-                    if (aVal.getClass() != bVal.getClass()) {
-                        aVal = aVal.toString()
-                        bVal = bVal.toString()
-                    }
-                    if (aVal != bVal) return aVal <=> bVal
+                // Simple version comparison
+                def aParts = a.key.tokenize('.')
+                def bParts = b.key.tokenize('.')
+                for (int i = 0; i < Math.min(aParts.size(), bParts.size()); i++) {
+                    def aNum = aParts[i].toInteger()
+                    def bNum = bParts[i].toInteger()
+                    if (aNum != bNum) return aNum <=> bNum
                 }
-                return 0
+                return aParts.size() <=> bParts.size()
             }
 
             sortedVersions.each { version, url ->
