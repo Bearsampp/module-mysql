@@ -5,7 +5,7 @@ name: Update Releases Properties
 
 on:
   release:
-    types: [released, edited]
+    types: [released, prereleased, edited]
 
   # Manual trigger for testing
   workflow_dispatch:
@@ -17,12 +17,17 @@ on:
 jobs:
   update-properties:
     runs-on: ubuntu-latest
+    # Skip execution if running in .settings repository
+    if: ${{ !endsWith(github.repository, '.settings') }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -211,8 +216,17 @@ jobs:
 
               # Create property key (just version number)
               key = ver
-              properties[key] = url
-              print(f"Added/Updated: {key} = {url}")
+              if key in properties:
+                  if properties[key] == url:
+                      print(f"Skipped (URL unchanged): {key} = {url}")
+                  else:
+                      print(f"Updated URL: {key}")
+                      print(f"  Old: {properties[key]}")
+                      print(f"  New: {url}")
+                      properties[key] = url
+              else:
+                  properties[key] = url
+                  print(f"Added: {key} = {url}")
 
           # Sort properties by version (semver)
           def extract_version(key):
@@ -243,7 +257,7 @@ jobs:
 
       - name: Create Pull Request
         id: create_pr
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GH_PAT }}
           base: main
