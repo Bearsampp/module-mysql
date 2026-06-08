@@ -12,6 +12,7 @@ on:
 
 jobs:
   validate-links:
+    name: validate-links
     runs-on: ubuntu-latest
     
     steps:
@@ -34,12 +35,16 @@ jobs:
         id: changed_files
         run: |
           # Get list of changed .properties files
-          # Make sure we have the base branch
-          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || git fetch origin ${{ github.event.pull_request.base.ref }}
+          # Using git diff with base and head SHAs is the most reliable way in PRs
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           
-          # Use ... to find changes between the common ancestor and HEAD
-          # This is more robust for PRs
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD | grep '\.properties$' || true)
+          echo "Comparing $BASE_SHA to $HEAD_SHA"
+          
+          # Fetch enough history to find the common ancestor
+          git fetch origin $BASE_SHA --depth=1 || git fetch origin $BASE_SHA
+          
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA $HEAD_SHA | grep '\.properties$' || true)
           
           if [ -z "$CHANGED_FILES" ]; then
             echo "No properties files changed"
