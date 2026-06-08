@@ -264,7 +264,7 @@ jobs:
 
       - name: Create Pull Request
         id: create_pr
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GH_PAT }}
           base: main
@@ -299,7 +299,19 @@ jobs:
         if: steps.create_pr.outputs.pull-request-number != ''
         run: |
           echo "Waiting for link validation to complete..."
-          sleep 10
+          # Fetch the latest status of checks
+          for i in {1..30}; do
+            STATUS=$(gh pr view ${{ steps.create_pr.outputs.pull-request-number }} --json statusCheckRollup --template '{{range .statusCheckRollup}}{{if .conclusion}}{{.conclusion}}{{else}}{{.status}}{{end}}{{end}}')
+            echo "Current status: $STATUS"
+            if [[ "$STATUS" == *"SUCCESS"* ]]; then
+              echo "Validation passed!"
+              break
+            elif [[ "$STATUS" == *"FAILURE"* ]]; then
+              echo "Validation failed!"
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Enable auto-merge
         if: steps.create_pr.outputs.pull-request-number != ''
