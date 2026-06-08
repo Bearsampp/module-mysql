@@ -7,18 +7,25 @@ on:
   release:
     types: [released, prereleased, edited]
 
+  pull_request:
+    types: [closed]
+    branches:
+      - 'main'
+
   # Manual trigger for testing
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to process (e.g., 2025.10.31)'
-        required: true
+        description: 'Release tag to process (optional)'
+        required: false
 
 jobs:
   update-properties:
     runs-on: ubuntu-latest
-    # Skip execution if running in .settings repository
-    if: ${{ !endsWith(github.repository, '.settings') }}
+    # Run only on release OR workflow_dispatch if a tag is provided
+    if: |
+      !endsWith(github.repository, '.settings') &&
+      (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''))
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -300,3 +307,25 @@ jobs:
           gh pr merge ${{ steps.create_pr.outputs.pull-request-number }} --auto --squash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+
+  dispatch:
+    runs-on: ubuntu-latest
+    needs: [update-properties]
+    if: |
+      always() &&
+      !endsWith(github.repository, '.settings') &&
+      (
+        (needs.update-properties.result == 'success') ||
+        (needs.update-properties.result == 'skipped' && (
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag == '') ||
+          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.labels.*.name, 'releases-update'))
+        ))
+      )
+    steps:
+      - name: Invoke workflow in another repo (Quickpick Dispatcher)
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          repository: Bearsampp/Bearsampp
+          event-type: module_release_created
+          client-payload: '{"workflow": "combine_releases.yml"}'
