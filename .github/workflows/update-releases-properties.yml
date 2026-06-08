@@ -298,20 +298,45 @@ jobs:
       - name: Wait for validation checks
         if: steps.create_pr.outputs.pull-request-number != ''
         run: |
-          echo "Waiting for link validation to complete..."
-          # Fetch the latest status of checks
-          for i in {1..30}; do
-            STATUS=$(gh pr view ${{ steps.create_pr.outputs.pull-request-number }} --json statusCheckRollup --template '{{range .statusCheckRollup}}{{if .conclusion}}{{.conclusion}}{{else}}{{.status}}{{end}}{{end}}')
-            echo "Current status: $STATUS"
-            if [[ "$STATUS" == *"SUCCESS"* ]]; then
-              echo "Validation passed!"
-              break
-            elif [[ "$STATUS" == *"FAILURE"* ]]; then
-              echo "Validation failed!"
-              exit 1
+          PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
+          echo "Waiting for 'Validate Properties Links' check to complete on PR #$PR_NUMBER..."
+          
+          # Give GitHub a moment to register the new PR and start the check
+          sleep 30
+          
+          for i in {1..40}; do
+            # Use gh pr view to get detailed status of checks
+            # We specifically look for the 'Validate Properties Links' check
+            CHECKS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "validate-links")')
+            
+            if [ -z "$CHECKS" ]; then
+              # Also try looking for it by name if the above fails
+              CHECKS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | select(.context == "validate-links" or .name == "validate-links")')
             fi
-            sleep 20
+            
+            if [ -n "$CHECKS" ]; then
+              STATE=$(echo "$CHECKS" | jq -r '.conclusion // .status')
+              echo "Current state of 'validate-links': $STATE"
+              
+              if [ "$STATE" == "SUCCESS" ] || [ "$STATE" == "success" ]; then
+                echo "Validation passed!"
+                exit 0
+              elif [ "$STATE" == "FAILURE" ] || [ "$STATE" == "failure" ] || [ "$STATE" == "error" ] || [ "$STATE" == "CANCELLED" ]; then
+                echo "Validation failed with state: $STATE"
+                exit 1
+              fi
+            else
+              echo "Check 'validate-links' not found yet, waiting..."
+              # Fallback to general status if specific check not found
+              GENERAL_STATUS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | .conclusion // .status')
+              echo "Other checks state: $(echo $GENERAL_STATUS | tr '\n' ' ')"
+            fi
+            
+            sleep 30
           done
+          
+          echo "Timeout waiting for validation checks"
+          exit 1
 
       - name: Enable auto-merge
         if: steps.create_pr.outputs.pull-request-number != ''
