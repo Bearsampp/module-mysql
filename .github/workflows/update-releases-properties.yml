@@ -31,13 +31,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_PAT }}
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -264,7 +264,7 @@ jobs:
 
       - name: Create Pull Request
         id: create_pr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
@@ -366,9 +366,9 @@ jobs:
       )
     steps:
       - name: Invoke workflow in another repo (Quickpick Dispatcher)
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.Gh_PAT }}
           repository: Bearsampp/Bearsampp
           event-type: module_release_created
           client-payload: '{"workflow": "combine_releases.yml"}'
