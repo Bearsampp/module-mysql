@@ -299,6 +299,8 @@ jobs:
 
       - name: Wait for validation checks
         if: steps.create_pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
           echo "Waiting for 'Validate Properties Links' check to complete on PR #$PR_NUMBER..."
