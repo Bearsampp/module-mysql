@@ -5,7 +5,7 @@ name: Update Releases Properties
 
 on:
   release:
-    types: [released, prereleased, edited]
+    types: [published, prereleased, edited]
 
   pull_request:
     types: [closed]
@@ -31,13 +31,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT }}
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
@@ -265,6 +265,8 @@ jobs:
       - name: Create Pull Request
         id: create_pr
         uses: peter-evans/create-pull-request@v7
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           token: ${{ secrets.GH_PAT }}
           base: main
@@ -304,32 +306,36 @@ jobs:
           # Give GitHub a moment to register the new PR and start the check
           sleep 30
           
+          # Use a more robust loop to check for the validation status
+          # We check every 30 seconds for up to 20 minutes (40 iterations)
           for i in {1..40}; do
             # Use gh pr view to get detailed status of checks
-            # We specifically look for the 'Validate Properties Links' check
-            CHECKS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | select(.name == "validate-links")')
+            # We specifically look for the 'validate-links' check
+            # The name might be 'validate-links' or 'validate-links / validate-links' depending on how it's reported
+            CHECK_JSON=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup // []')
             
-            if [ -z "$CHECKS" ]; then
-              # Also try looking for it by name if the above fails
-              CHECKS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | select(.context == "validate-links" or .name == "validate-links")')
-            fi
+            # Find the specific check for validate-links
+            CHECKS=$(echo "$CHECK_JSON" | jq -c '.[] | select(.context == "validate-links" or .name == "validate-links")')
             
             if [ -n "$CHECKS" ]; then
-              STATE=$(echo "$CHECKS" | jq -r '.conclusion // .status')
+              # Get the latest state (conclusion if available, else status)
+              STATE=$(echo "$CHECKS" | jq -r '.conclusion // .status' | tr '[:upper:]' '[:lower:]')
               echo "Current state of 'validate-links': $STATE"
               
-              if [ "$STATE" == "SUCCESS" ] || [ "$STATE" == "success" ]; then
+              if [[ "$STATE" == "success" ]]; then
                 echo "Validation passed!"
                 exit 0
-              elif [ "$STATE" == "FAILURE" ] || [ "$STATE" == "failure" ] || [ "$STATE" == "error" ] || [ "$STATE" == "CANCELLED" ]; then
+              elif [[ "$STATE" == "failure" || "$STATE" == "error" || "$STATE" == "cancelled" || "$STATE" == "action_required" ]]; then
                 echo "Validation failed with state: $STATE"
                 exit 1
               fi
+              # If state is 'pending', 'in_progress', or 'queued', we continue waiting
             else
-              echo "Check 'validate-links' not found yet, waiting..."
-              # Fallback to general status if specific check not found
-              GENERAL_STATUS=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup[] | .conclusion // .status')
-              echo "Other checks state: $(echo $GENERAL_STATUS | tr '\n' ' ')"
+              echo "Check 'validate-links' not found yet, waiting... (Iteration $i/40)"
+              # Optional: print all check names for debugging if not found after several attempts
+              if [ $i -gt 5 ]; then
+                echo "Available checks: $(echo "$CHECK_JSON" | jq -r '.[].name // .[].context' | tr '\n' ' ')"
+              fi
             fi
             
             sleep 30
@@ -360,7 +366,7 @@ jobs:
       )
     steps:
       - name: Invoke workflow in another repo (Quickpick Dispatcher)
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GH_PAT }}
           repository: Bearsampp/Bearsampp
