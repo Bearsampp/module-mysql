@@ -301,42 +301,39 @@ jobs:
         if: steps.create_pr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
-          echo "Waiting for 'Validate Properties Links' check to complete on PR #$PR_NUMBER..."
+          echo "Waiting for validation checks to complete on PR #$PR_NUMBER..."
           
           # Give GitHub a moment to register the new PR and start the check
           sleep 30
           
-          # Use a more robust loop to check for the validation status
-          # We check every 30 seconds for up to 20 minutes (40 iterations)
+          # Check every 30 seconds for up to 20 minutes (40 iterations)
           for i in {1..40}; do
-            # Use gh pr view to get detailed status of checks
-            # We specifically look for the 'validate-links' check
-            # The name might be 'validate-links' or 'validate-links / validate-links' depending on how it's reported
-            CHECK_JSON=$(gh pr view $PR_NUMBER --json statusCheckRollup --jq '.statusCheckRollup // []')
+            CHECK_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json statusCheckRollup --jq '.statusCheckRollup // []')
             
-            # Find the specific check for validate-links
-            CHECKS=$(echo "$CHECK_JSON" | jq -c '.[] | select(.context == "validate-links" or .name == "validate-links")')
+            # Match checks by either exact name/context or containing validate-links (e.g. "validate-links / validate-links")
+            CHECKS=$(echo "$CHECK_JSON" | jq -c '.[] | select((.name // .context // "") | ascii_downcase | contains("validate-links"))')
             
             if [ -n "$CHECKS" ]; then
-              # Get the latest state (conclusion if available, else status)
-              STATE=$(echo "$CHECKS" | jq -r '.conclusion // .status' | tr '[:upper:]' '[:lower:]')
-              echo "Current state of 'validate-links': $STATE"
+              # Get the latest reported state from all matching checks
+              STATES=$(echo "$CHECKS" | jq -r '(.conclusion // .status // "unknown") | ascii_downcase')
+              LATEST_STATE=$(echo "$STATES" | tail -n 1)
+              echo "Current state(s) of validation check(s): $(echo "$STATES" | tr '\n' ' ' | sed 's/ *$//')"
               
-              if [[ "$STATE" == "success" ]]; then
+              if echo "$STATES" | grep -Eq '^(failure|error|cancelled|action_required)$'; then
+                echo "Validation failed with state(s): $(echo "$STATES" | tr '\n' ' ' | sed 's/ *$//')"
+                exit 1
+              elif [[ "$LATEST_STATE" == "success" ]]; then
                 echo "Validation passed!"
                 exit 0
-              elif [[ "$STATE" == "failure" || "$STATE" == "error" || "$STATE" == "cancelled" || "$STATE" == "action_required" ]]; then
-                echo "Validation failed with state: $STATE"
-                exit 1
               fi
-              # If state is 'pending', 'in_progress', or 'queued', we continue waiting
+              # If state is pending/in_progress/queued/etc., continue waiting
             else
-              echo "Check 'validate-links' not found yet, waiting... (Iteration $i/40)"
-              # Optional: print all check names for debugging if not found after several attempts
+              echo "Validation check not found yet, waiting... (Iteration $i/40)"
               if [ $i -gt 5 ]; then
-                echo "Available checks: $(echo "$CHECK_JSON" | jq -r '.[].name // .[].context' | tr '\n' ' ')"
+                echo "Available checks: $(echo "$CHECK_JSON" | jq -r '.[] | (.name // .context // "<unknown>")' | tr '\n' ' ')"
               fi
             fi
             
@@ -349,7 +346,8 @@ jobs:
       - name: Enable auto-merge
         if: steps.create_pr.outputs.pull-request-number != ''
         run: |
-          gh pr merge ${{ steps.create_pr.outputs.pull-request-number }} --auto --squash
+          PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --auto --squash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
