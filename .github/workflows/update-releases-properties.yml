@@ -84,6 +84,24 @@ jobs:
           from packaging import version
           from collections import OrderedDict
 
+          def is_url_accessible(url, timeout=10):
+              """Validate URL accessibility using HEAD first, then GET fallback."""
+              try:
+                  response = requests.head(url, timeout=timeout, allow_redirects=True)
+                  if response.status_code == 200:
+                      return True, response.status_code, response.reason
+
+                  # Some servers don't support HEAD properly; retry with GET
+                  response = requests.get(url, timeout=timeout, allow_redirects=True, stream=True)
+                  if response.status_code == 200:
+                      return True, response.status_code, response.reason
+
+                  return False, response.status_code, response.reason
+              except requests.exceptions.Timeout:
+                  return False, "TIMEOUT", "Request timeout"
+              except requests.exceptions.RequestException as e:
+                  return False, "ERROR", str(e)
+
           # Get environment variables
           release_tag = os.environ['RELEASE_TAG']
           repo_owner = os.environ['REPO_OWNER']
@@ -191,7 +209,17 @@ jobs:
           # Fix malformed version entries by re-extracting correct versions from URLs
           # This handles cases like "2025.7.2.7" or "18.1-2025" that should be "18.1"
           fixed_properties = OrderedDict()
+          removed_invalid_entries = 0
           for key, url in properties.items():
+              # Validate URL first; drop stale or invalid entries
+              is_valid, status, reason = is_url_accessible(url)
+              if not is_valid:
+                  print(f"Removing invalid entry: {key}")
+                  print(f"  URL: {url}")
+                  print(f"  Status: {status} - {reason}")
+                  removed_invalid_entries += 1
+                  continue
+
               # Try to extract the correct version from the URL
               # URL format: .../bearsampp-apache-2.4.66-2025.12.8.7z (for apache)
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
@@ -258,6 +286,7 @@ jobs:
                   f.write(f"{key} = {value}\n")
 
           print(f"\nSuccessfully updated {properties_file}")
+          print(f"Removed invalid/stale entries: {removed_invalid_entries}")
           print(f"Total versions: {len(sorted_properties)}")
 
           EOF
@@ -284,6 +313,7 @@ jobs:
 
             ### Changes:
             - Extracted .7z assets from the release
+            - Removed stale/invalid existing URLs from `releases.properties`
             - Added version entries with download URLs
             - Maintained semver ordering (newest first)
 
@@ -292,7 +322,7 @@ jobs:
             ### Next Steps:
             1. ⏳ Link validation will run automatically
             2. ✅ Once validation passes, this PR will auto-merge
-            3. ❌ If validation fails, please review and fix invalid URLs
+            3. ❌ If validation fails, review logs for transient network/service issues
           labels: |
             automated
             releases-update
