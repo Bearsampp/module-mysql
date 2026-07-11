@@ -4,11 +4,12 @@ name: Validate Properties Links
 # Works for both modules/*.properties and releases.properties files
 
 on:
-  pull_request:
-    types: [opened, synchronize, edited, reopened]
-    paths:
-      - 'modules/*.properties'
-      - 'releases.properties'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to validate'
+        required: true
+        type: number
 
 jobs:
   validate-links:
@@ -16,16 +17,31 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
+
     steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      
+
+      - name: Get PR details
+        id: pr_details
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefName,baseRefName)
+          HEAD_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+          echo "head_branch=$HEAD_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.pr_details.outputs.head_branch }}
+          fetch-depth: 0
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       
@@ -35,18 +51,21 @@ jobs:
       
       - name: Get changed properties files
         id: changed_files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
-          # Get list of changed .properties files
-          # Using git diff with base and head SHAs is the most reliable way in PRs
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          
-          echo "Comparing $BASE_SHA to $HEAD_SHA"
-          
-          # Fetch enough history to find the common ancestor
-          git fetch origin $BASE_SHA --depth=1 || git fetch origin $BASE_SHA
-          
-          CHANGED_FILES=$(git diff --name-only $BASE_SHA $HEAD_SHA | grep '\.properties$' || true)
+          # Get PR base and head refs
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json baseRefName,headRefName)
+          BASE_BRANCH=$(echo "$PR_JSON" | jq -r '.baseRefName')
+          HEAD_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+
+          echo "Comparing $BASE_BRANCH to $HEAD_BRANCH"
+
+          # Fetch the base branch
+          git fetch origin "$BASE_BRANCH" --depth=1 || git fetch origin "$BASE_BRANCH"
+
+          CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"..."HEAD" | grep '\.properties$' || true)
           
           if [ -z "$CHANGED_FILES" ]; then
             echo "No properties files changed"
@@ -222,46 +241,49 @@ jobs:
       
       - name: Comment on PR with validation results
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+          PR_NUMBER: ${{ inputs.pr_number }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            
+            const prNumber = parseInt(process.env.PR_NUMBER);
+
             // Create a comment on the PR
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
               body: `## ❌ Link Validation Failed
-              
+
               Some URLs in the modified properties files are not accessible. Please check the workflow logs for details.
-              
+
               **Action Required:**
               - Review the invalid URLs listed in the [workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
               - Fix or remove the invalid URLs
               - Push the changes to trigger a new validation
-              
+
               The PR cannot be merged until all URLs are valid.`
             });
-      
+
       - name: Comment on PR with success
         if: success() && steps.changed_files.outputs.files != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+          PR_NUMBER: ${{ inputs.pr_number }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const prNumber = parseInt(process.env.PR_NUMBER);
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
               body: `## ✅ Link Validation Passed
-              
+
               All URLs in the modified properties files have been validated and are accessible.
-              
+
               This PR is ready for review and merge.`
             });
