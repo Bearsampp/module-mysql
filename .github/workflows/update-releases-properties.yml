@@ -147,19 +147,27 @@ jobs:
           for asset in release_data.get('assets', []):
               filename = asset['name']
 
-              # Check if file ends with .7z
-              if filename.endswith('.7z'):
+              # Check if file ends with .7z or .7z.exe
+              if filename.endswith('.7z') or filename.endswith('.7z.exe'):
                   download_url = asset['browser_download_url']
 
-                  # Extract version number after filename prefix (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
-                  # Pattern: filename_prefix followed by version, then either a dash+date or .7z
-                  # Supports: 18.1, 17.2.3, 3.2.1.0, 17.0-RC1, 2.4.62
-                  # The lookahead ensures we stop before a date pattern or .7z extension
-                  version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
-                      filename,
-                      re.IGNORECASE
-                  )
+                  version_match = None
+
+                  if module_name.lower() == 'git':
+                      # Git uses PortableGit format (e.g., "PortableGit-2.55.0.2-64-bit.7z.exe" -> "2.55.0.2")
+                      version_match = re.search(
+                          r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)',
+                          filename,
+                          re.IGNORECASE
+                      )
+                  else:
+                      # Other modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
+                      version_match = re.search(
+                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                          filename,
+                          re.IGNORECASE
+                      )
+
                   if version_match:
                       ver = version_match.group(1)
                       assets.append({
@@ -172,7 +180,8 @@ jobs:
                       print(f"Warning: Could not extract version from: {filename}")
                       # Debug: print the filename for troubleshooting
                       print(f"  Filename: {filename}")
-                      print(f"  Looking for prefix: {filename_prefix}")
+                      if module_name.lower() == 'git':
+                          print(f"  Expected PortableGit format")
 
           if not assets:
               print(f"No .7z assets found in release")
@@ -223,16 +232,24 @@ jobs:
               # Try to extract the correct version from the URL
               # URL format: .../bearsampp-apache-2.4.66-2025.12.8.7z (for apache)
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
-              url_version_match = re.search(
-                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
-                  url,
-                  re.IGNORECASE
-              )
+              # URL format: .../PortableGit-2.55.0.2-64-bit.7z.exe (for Git)
+              if module_name.lower() == 'git':
+                  url_version_match = re.search(
+                      r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)',
+                      url,
+                      re.IGNORECASE
+                  )
+              else:
+                  url_version_match = re.search(
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
+                      url,
+                      re.IGNORECASE
+                  )
 
               if url_version_match:
                   correct_version = url_version_match.group(1)
-                  # If the key is malformed (date-like or has trailing year), fix it
-                  if re.match(r'^20\d{2}\.', key) or re.search(r'-20\d{2}$', key):
+                  # If the key is malformed (date-like or has trailing year or has -64 suffix), fix it
+                  if re.match(r'^20\d{2}\.', key) or re.search(r'-20\d{2}$', key) or re.search(r'-\d+-bit$', key, re.IGNORECASE):
                       print(f"Fixing malformed entry: {key} -> {correct_version}")
                       fixed_properties[correct_version] = url
                   else:
