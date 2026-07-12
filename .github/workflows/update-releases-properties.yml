@@ -344,6 +344,127 @@ jobs:
             automated
             releases-update
 
+      - name: Validate URLs in updated releases.properties
+        if: steps.create_pr.outputs.pull-request-number != ''
+        env:
+          RELEASES_FILE: releases.properties
+        run: |
+          python << 'EOF'
+          import os
+          import sys
+          import requests
+          import time
+
+          releases_file = os.environ.get('RELEASES_FILE', 'releases.properties')
+
+          if not os.path.exists(releases_file):
+              print(f"❌ File not found: {releases_file}")
+              sys.exit(1)
+
+          print(f"📄 Validating URLs in: {releases_file}")
+          print("-" * 80)
+
+          with open(releases_file, 'r', encoding='utf-8') as f:
+              lines = f.readlines()
+
+          urls_to_check = []
+          for line_num, line in enumerate(lines, 1):
+              line = line.strip()
+
+              if not line or line.startswith('#'):
+                  continue
+
+              if '=' in line:
+                  key, value = line.split('=', 1)
+                  url = value.strip()
+
+                  if url.startswith('http://') or url.startswith('https://'):
+                      urls_to_check.append({
+                          'line': line_num,
+                          'version': key.strip(),
+                          'url': url
+                      })
+
+          print(f"Found {len(urls_to_check)} URL(s) to validate\n")
+
+          all_valid = True
+          valid_count = 0
+          invalid_urls = []
+
+          for item in urls_to_check:
+              version = item['version']
+              url = item['url']
+              line = item['line']
+
+              try:
+                  response = requests.head(url, timeout=10, allow_redirects=True)
+
+                  if response.status_code >= 400:
+                      response = requests.get(url, timeout=10, allow_redirects=True, stream=True)
+
+                  if response.status_code == 200:
+                      print(f"✅ Version {version}: {response.status_code} OK")
+                      valid_count += 1
+                  else:
+                      print(f"❌ Version {version}: {response.status_code} {response.reason}")
+                      invalid_urls.append({
+                          'version': version,
+                          'url': url,
+                          'status': response.status_code,
+                          'reason': response.reason
+                      })
+                      all_valid = False
+
+              except requests.exceptions.Timeout:
+                  print(f"⏱️  Version {version}: Request timeout (>10s)")
+                  invalid_urls.append({
+                      'version': version,
+                      'url': url,
+                      'status': 'TIMEOUT',
+                      'reason': 'Request timeout'
+                  })
+                  all_valid = False
+
+              except requests.exceptions.RequestException as e:
+                  print(f"❌ Version {version}: {str(e)}")
+                  invalid_urls.append({
+                      'version': version,
+                      'url': url,
+                      'status': 'ERROR',
+                      'reason': str(e)
+                  })
+                  all_valid = False
+
+              time.sleep(0.5)
+
+          print("\n" + "=" * 80)
+          print("VALIDATION SUMMARY")
+          print("=" * 80)
+          print(f"Total URLs checked: {len(urls_to_check)}")
+          print(f"Valid URLs: {valid_count}")
+          print(f"Invalid URLs: {len(invalid_urls)}")
+          print()
+
+          if invalid_urls:
+              print("❌ INVALID URLS FOUND:")
+              print("-" * 80)
+              for item in invalid_urls:
+                  print(f"\nVersion: {item['version']}")
+                  print(f"URL: {item['url']}")
+                  print(f"Status: {item['status']} - {item['reason']}")
+              print()
+              print("=" * 80)
+              print("❌ VALIDATION FAILED - Please fix the invalid URLs above")
+              print("=" * 80)
+              sys.exit(1)
+          else:
+              print("=" * 80)
+              print("✅ ALL URLS ARE VALID")
+              print("=" * 80)
+              sys.exit(0)
+
+          EOF
+
       - name: Enable auto-merge
         if: steps.create_pr.outputs.pull-request-number != ''
         run: |
@@ -379,18 +500,6 @@ jobs:
 
           echo "Timeout waiting for PR to be merged"
           exit 1
-
-      - name: Trigger validation workflow
-        if: steps.create_pr.outputs.pull-request-number != ''
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
-          echo "Triggering validation workflow for PR #$PR_NUMBER..."
-          gh workflow run validate-properties-links.yml \
-            --repo "${{ github.repository }}" \
-            -f pr_number="$PR_NUMBER"
 
   dispatch:
     runs-on: ubuntu-latest
