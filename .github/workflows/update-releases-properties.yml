@@ -166,8 +166,9 @@ jobs:
                       )
                   else:
                       # Other modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
+                      # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
                       version_match = re.search(
-                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
                           filename,
                           re.IGNORECASE
                       )
@@ -245,7 +246,7 @@ jobs:
                   )
               else:
                   url_version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
                       url,
                       re.IGNORECASE
                   )
