@@ -470,41 +470,17 @@ jobs:
 
           EOF
 
-      - name: Enable auto-merge
-        if: steps.create_pr.outputs.pull-request-number != ''
-        run: |
-          PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
-          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --auto --squash
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Wait for auto-merge to complete
+      - name: Merge Pull Request
         if: steps.create_pr.outputs.pull-request-number != ''
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.BEARSAMPP_BOT_PAT }}
         run: |
           PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
-          echo "Waiting for PR #$PR_NUMBER to be merged..."
-
-          # Check every 10 seconds for up to 5 minutes (30 iterations)
-          for i in {1..30}; do
-            PR_STATE=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq '.state')
-            echo "PR state: $PR_STATE"
-
-            if [[ "$PR_STATE" == "MERGED" ]]; then
-              echo "PR has been merged!"
-              exit 0
-            elif [[ "$PR_STATE" == "CLOSED" ]]; then
-              echo "PR was closed without merging"
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-          echo "Timeout waiting for PR to be merged"
-          exit 1
+          echo "Merging PR #$PR_NUMBER"
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --merge \
+            || gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --squash \
+            || gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --rebase \
+            || echo "Merge skipped (PR already merged or not mergeable)."
 
   dispatch:
     runs-on: ubuntu-latest
