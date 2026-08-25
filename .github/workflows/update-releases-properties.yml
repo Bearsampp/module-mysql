@@ -5,12 +5,7 @@ name: Update Releases Properties
 
 on:
   release:
-    types: [published, prereleased, edited]
-
-  pull_request:
-    types: [closed]
-    branches:
-      - 'main'
+    types: [published, edited]
 
   # Manual trigger for testing
   workflow_dispatch:
@@ -29,7 +24,10 @@ jobs:
     # Run only on release OR workflow_dispatch if a tag is provided
     if: |
       !endsWith(github.repository, '.settings') &&
-      (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''))
+      (
+        (github.event_name == 'release' && !github.event.release.draft) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+      )
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -87,24 +85,6 @@ jobs:
           import requests
           from packaging import version
           from collections import OrderedDict
-
-          def is_url_accessible(url, timeout=10):
-              """Validate URL accessibility using HEAD first, then GET fallback."""
-              try:
-                  response = requests.head(url, timeout=timeout, allow_redirects=True)
-                  if response.status_code == 200:
-                      return True, response.status_code, response.reason
-
-                  # Some servers don't support HEAD properly; retry with GET
-                  response = requests.get(url, timeout=timeout, allow_redirects=True, stream=True)
-                  if response.status_code == 200:
-                      return True, response.status_code, response.reason
-
-                  return False, response.status_code, response.reason
-              except requests.exceptions.Timeout:
-                  return False, "TIMEOUT", "Request timeout"
-              except requests.exceptions.RequestException as e:
-                  return False, "ERROR", str(e)
 
           # Get environment variables
           release_tag = os.environ['RELEASE_TAG']
@@ -165,13 +145,14 @@ jobs:
                           re.IGNORECASE
                       )
                   else:
-                      # Other modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
-                      # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
-                      version_match = re.search(
-                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
-                          filename,
-                          re.IGNORECASE
-                      )
+                       # Other modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
+                       # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
+                       # Optional (?:-(?:RC|beta|alpha|dev)\d*)? preserves prerelease suffixes in the key (e.g., "bearsampp-mariadb-13.0.1-RC-2026.8.23.7z" -> "13.0.1-RC")
+                       version_match = re.search(
+                           rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                           filename,
+                           re.IGNORECASE
+                       )
 
                   if version_match:
                       ver = version_match.group(1)
@@ -222,18 +203,11 @@ jobs:
 
           # Fix malformed version entries by re-extracting correct versions from URLs
           # This handles cases like "2025.7.2.7" or "18.1-2025" that should be "18.1"
+          # NOTE: Existing entries are never removed — releases.properties is the complete history.
+          # Stale/404 URLs are kept because the asset may still exist under a different URL
+          # (e.g. re-hosted under a newer release or on the website's bin/archived/ path).
           fixed_properties = OrderedDict()
-          removed_invalid_entries = 0
           for key, url in properties.items():
-              # Validate URL first; drop stale or invalid entries
-              is_valid, status, reason = is_url_accessible(url)
-              if not is_valid:
-                  print(f"Removing invalid entry: {key}")
-                  print(f"  URL: {url}")
-                  print(f"  Status: {status} - {reason}")
-                  removed_invalid_entries += 1
-                  continue
-
               # Try to extract the correct version from the URL
               # URL format: .../bearsampp-apache-2.4.66-2025.12.8.7z (for apache)
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
@@ -246,7 +220,7 @@ jobs:
                   )
               else:
                   url_version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?)(?=(?:-(?:RC|beta|alpha|dev)\d*)?-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
                       url,
                       re.IGNORECASE
                   )
@@ -265,6 +239,62 @@ jobs:
                   fixed_properties[key] = url
 
           properties = fixed_properties
+
+          # Repair stale URLs by searching all releases for replacement assets.
+          # Old releases sometimes have their assets deleted/reorganized (e.g. assets
+          # moved from 2022.12.03 to 2024.4.20). We search all releases to find a
+          # working URL for any version whose current URL returns 404.
+          print(f"\nChecking for stale URLs and searching for replacements...")
+          version_url_map = {}
+          page = 1
+          while True:
+              releases_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases?per_page=100&page={page}"
+              releases_response = requests.get(releases_api_url, headers=headers)
+              releases_response.raise_for_status()
+              releases_page = releases_response.json()
+              if not releases_page:
+                  break
+              for release in releases_page:
+                  for asset in release.get('assets', []):
+                      asset_name = asset['name']
+                      if not (asset_name.endswith('.7z') or asset_name.endswith('.7z.exe')):
+                          continue
+                      if module_name.lower() == 'git':
+                          m = re.search(r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)', asset_name, re.IGNORECASE)
+                      else:
+                          m = re.search(
+                              rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                              asset_name, re.IGNORECASE
+                          )
+                      if m:
+                          ver = m.group(1)
+                          if ver not in version_url_map:
+                              version_url_map[ver] = asset['browser_download_url']
+              if len(releases_page) < 100:
+                  break
+              page += 1
+
+          print(f"Found {len(version_url_map)} versions across all releases")
+
+          repaired_entries = 0
+          for key, url in list(properties.items()):
+              try:
+                  response = requests.head(url, timeout=10, allow_redirects=True)
+                  if response.status_code == 404 and key in version_url_map:
+                      new_url = version_url_map[key]
+                      if new_url != url:
+                          print(f"Repairing stale URL: {key}")
+                          print(f"  Old: {url}")
+                          print(f"  New: {new_url}")
+                          properties[key] = new_url
+                          repaired_entries += 1
+              except requests.exceptions.RequestException:
+                  pass
+
+          if repaired_entries > 0:
+              print(f"\nRepaired {repaired_entries} stale URLs")
+          else:
+              print(f"\nNo stale URLs needed repair")
 
           # Add new versions
           for asset in assets:
@@ -308,179 +338,33 @@ jobs:
                   f.write(f"{key} = {value}\n")
 
           print(f"\nSuccessfully updated {properties_file}")
-          print(f"Removed invalid/stale entries: {removed_invalid_entries}")
           print(f"Total versions: {len(sorted_properties)}")
 
           EOF
 
-      - name: Create Pull Request
-        id: create_pr
-        uses: peter-evans/create-pull-request@v8
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-        with:
-          token: ${{ secrets.GH_PAT }}
-          base: main
-          commit-message: |
-            Update releases.properties
-
-            Auto-generated from release ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
-          branch: update-releases-${{ github.event.release.tag_name || github.event.inputs.release_tag }}
-          delete-branch: true
-          title: 'Update releases.properties from release ${{ github.event.release.tag_name || github.event.inputs.release_tag }}'
-          body: |
-            ## 🤖 Automated Releases Properties Update
-
-            This PR updates the `releases.properties` file with new versions from release `${{ github.event.release.tag_name || github.event.inputs.release_tag }}`.
-
-            ### Changes:
-            - Extracted .7z assets from the release
-            - Removed stale/invalid existing URLs from `releases.properties`
-            - Added version entries with download URLs
-            - Maintained semver ordering (newest first)
-
-            **Release URL:** ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.event.release.tag_name || github.event.inputs.release_tag }}
-
-            ### Next Steps:
-            1. ⏳ Link validation will run automatically
-            2. ✅ Once validation passes, this PR will auto-merge
-            3. ❌ If validation fails, review logs for transient network/service issues
-          labels: |
-            automated
-            releases-update
-
-      - name: Validate URLs in updated releases.properties
-        if: steps.create_pr.outputs.pull-request-number != ''
-        env:
-          RELEASES_FILE: releases.properties
+      - name: Check for changes
+        id: check_changes
         run: |
-          python << 'EOF'
-          import os
-          import sys
-          import requests
-          import time
+          if git diff --quiet releases.properties 2>/dev/null; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes to releases.properties"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in releases.properties"
+          fi
 
-          releases_file = os.environ.get('RELEASES_FILE', 'releases.properties')
-
-          if not os.path.exists(releases_file):
-              print(f"❌ File not found: {releases_file}")
-              sys.exit(1)
-
-          print(f"📄 Validating URLs in: {releases_file}")
-          print("-" * 80)
-
-          with open(releases_file, 'r', encoding='utf-8') as f:
-              lines = f.readlines()
-
-          urls_to_check = []
-          for line_num, line in enumerate(lines, 1):
-              line = line.strip()
-
-              if not line or line.startswith('#'):
-                  continue
-
-              if '=' in line:
-                  key, value = line.split('=', 1)
-                  url = value.strip()
-
-                  if url.startswith('http://') or url.startswith('https://'):
-                      urls_to_check.append({
-                          'line': line_num,
-                          'version': key.strip(),
-                          'url': url
-                      })
-
-          print(f"Found {len(urls_to_check)} URL(s) to validate\n")
-
-          all_valid = True
-          valid_count = 0
-          invalid_urls = []
-
-          for item in urls_to_check:
-              version = item['version']
-              url = item['url']
-              line = item['line']
-
-              try:
-                  response = requests.head(url, timeout=10, allow_redirects=True)
-
-                  if response.status_code >= 400:
-                      response = requests.get(url, timeout=10, allow_redirects=True, stream=True)
-
-                  if response.status_code == 200:
-                      print(f"✅ Version {version}: {response.status_code} OK")
-                      valid_count += 1
-                  else:
-                      print(f"❌ Version {version}: {response.status_code} {response.reason}")
-                      invalid_urls.append({
-                          'version': version,
-                          'url': url,
-                          'status': response.status_code,
-                          'reason': response.reason
-                      })
-                      all_valid = False
-
-              except requests.exceptions.Timeout:
-                  print(f"⏱️  Version {version}: Request timeout (>10s)")
-                  invalid_urls.append({
-                      'version': version,
-                      'url': url,
-                      'status': 'TIMEOUT',
-                      'reason': 'Request timeout'
-                  })
-                  all_valid = False
-
-              except requests.exceptions.RequestException as e:
-                  print(f"❌ Version {version}: {str(e)}")
-                  invalid_urls.append({
-                      'version': version,
-                      'url': url,
-                      'status': 'ERROR',
-                      'reason': str(e)
-                  })
-                  all_valid = False
-
-              time.sleep(0.5)
-
-          print("\n" + "=" * 80)
-          print("VALIDATION SUMMARY")
-          print("=" * 80)
-          print(f"Total URLs checked: {len(urls_to_check)}")
-          print(f"Valid URLs: {valid_count}")
-          print(f"Invalid URLs: {len(invalid_urls)}")
-          print()
-
-          if invalid_urls:
-              print("❌ INVALID URLS FOUND:")
-              print("-" * 80)
-              for item in invalid_urls:
-                  print(f"\nVersion: {item['version']}")
-                  print(f"URL: {item['url']}")
-                  print(f"Status: {item['status']} - {item['reason']}")
-              print()
-              print("=" * 80)
-              print("❌ VALIDATION FAILED - Please fix the invalid URLs above")
-              print("=" * 80)
-              sys.exit(1)
-          else:
-              print("=" * 80)
-              print("✅ ALL URLS ARE VALID")
-              print("=" * 80)
-              sys.exit(0)
-
-          EOF
-
-      - name: Merge Pull Request
-        if: steps.create_pr.outputs.pull-request-number != ''
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ secrets.BEARSAMPP_BOT_PAT }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
         run: |
-          PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}
-          echo "Merging PR #$PR_NUMBER"
-          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --merge \
-            || gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --squash \
-            || gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --rebase \
-            || echo "Merge skipped (PR already merged or not mergeable)."
+          git config user.name "Bearsampp Bot"
+          git config user.email "bot@bearsampp.com"
+          git add releases.properties
+          git commit -m "Update releases.properties
+
+          Auto-generated from release ${RELEASE_TAG}"
+          git push origin main
 
   dispatch:
     runs-on: ubuntu-latest
@@ -490,10 +374,7 @@ jobs:
       !endsWith(github.repository, '.settings') &&
       (
         (needs.update-properties.result == 'success') ||
-        (needs.update-properties.result == 'skipped' && (
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag == '') ||
-          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.labels.*.name, 'releases-update'))
-        ))
+        (needs.update-properties.result == 'skipped' && github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag == '')
       )
     steps:
       - name: Invoke workflow in another repo (Quickpick Dispatcher)
