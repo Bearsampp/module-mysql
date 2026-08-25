@@ -381,19 +381,20 @@ jobs:
             echo "Changes detected in releases.properties"
           fi
 
-      - name: Commit and push changes
-        if: steps.check_changes.outputs.has_changes == 'true'
-        env:
-          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
-          BRANCH: ${{ steps.resolve.outputs.branch }}
-        run: |
-          git config user.name "Bearsampp Bot"
-          git config user.email "bot@bearsampp.com"
-          git add releases.properties
-          git commit -m "Update releases.properties
-
-          Auto-generated from release ${RELEASE_TAG}"
-          git push origin HEAD:${BRANCH}
+      -   name: Commit and push changes
+          if: steps.check_changes.outputs.has_changes == 'true'
+          env:
+            RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+            BRANCH: ${{ steps.resolve.outputs.branch }}
+            GH_TOKEN: ${{ secrets.GH_BEARSAMPP_BOT_PAT }}
+          run: |
+            git config user.name "Bearsampp Bot"
+            git config user.email "bot@bearsampp.com"
+            git add releases.properties
+            git commit -m "Update releases.properties
+            
+            Auto-generated from release ${RELEASE_TAG}"
+            git push origin HEAD:${BRANCH}
 
   dispatch:
     runs-on: ubuntu-latest
