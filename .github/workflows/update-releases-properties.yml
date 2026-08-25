@@ -390,7 +390,7 @@ jobs:
         run: |
           git config user.name "Bearsampp Bot"
           git config user.email "bot@bearsampp.com"
-          git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git remote set-url origin "https://${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git add releases.properties
           git commit -m "Update releases.properties
           
