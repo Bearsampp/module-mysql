@@ -5,7 +5,7 @@ name: Update Releases Properties
 
 on:
   release:
-    types: [published, edited]
+    types: [published, prerelease, edited]
 
   # Manual trigger for testing
   workflow_dispatch:
