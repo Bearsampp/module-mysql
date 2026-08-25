@@ -1,41 +1,69 @@
 name: Update Releases Properties
 
 # This workflow runs in individual module repositories (e.g., module-php)
-# It automatically updates releases.properties file when a release is published
+# It updates releases.properties on a PR branch when a PR is opened or run manually
 
 on:
-  release:
-    types: [published, prerelease, edited]
+  pull_request:
+    types: [opened]
 
-  # Manual trigger for testing
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to process (optional)'
-        required: false
+        description: 'Release tag to process (e.g., php-2025.10.31)'
+        required: true
+      branch:
+        description: 'Branch to commit changes to'
+        required: true
 
 concurrency:
-  group: update-releases-${{ github.event.release.tag_name || github.event.inputs.release_tag }}
+  group: update-releases-${{ github.head_ref || github.event.inputs.branch }}
   cancel-in-progress: false
 
 jobs:
   update-properties:
     runs-on: ubuntu-latest
-    # Run only on release OR workflow_dispatch if a tag is provided
-    if: |
-      !endsWith(github.repository, '.settings') &&
-      (
-        (github.event_name == 'release' && !github.event.release.draft) ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
-      )
+    if: "!endsWith(github.repository, '.settings')"
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
+      - name: Resolve release tag and branch
+        id: resolve
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.head_ref }}"
+            RELEASE_TAG=$(python3 -c "
+          import os
+          body = os.environ.get('PR_BODY', '')
+          for line in body.split(chr(10)):
+              line = line.strip()
+              if line.startswith('Release:'):
+                  print(line.split(':', 1)[1].strip())
+                  break
+          ")
+            if [[ -z "$RELEASE_TAG" ]]; then
+              echo "::error::Could not find release tag in PR body."
+              echo "Expected a line like: Release: php-2025.10.31"
+              exit 1
+            fi
+          else
+            RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+            BRANCH="${{ github.event.inputs.branch }}"
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Release tag: $RELEASE_TAG"
+          echo "Branch: $BRANCH"
+
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_PAT }}
+          ref: ${{ steps.resolve.outputs.branch }}
           persist-credentials: false
 
       - name: Set up Python
@@ -74,7 +102,7 @@ jobs:
       - name: Update releases properties
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
           MODULE_NAME: ${{ steps.extract_module.outputs.module_name }}
@@ -356,7 +384,8 @@ jobs:
       - name: Commit and push changes
         if: steps.check_changes.outputs.has_changes == 'true'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
         run: |
           git config user.name "Bearsampp Bot"
           git config user.email "bot@bearsampp.com"
@@ -364,7 +393,7 @@ jobs:
           git commit -m "Update releases.properties
 
           Auto-generated from release ${RELEASE_TAG}"
-          git push origin main
+          git push origin HEAD:${BRANCH}
 
   dispatch:
     runs-on: ubuntu-latest
@@ -372,10 +401,7 @@ jobs:
     if: |
       always() &&
       !endsWith(github.repository, '.settings') &&
-      (
-        (needs.update-properties.result == 'success') ||
-        (needs.update-properties.result == 'skipped' && github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag == '')
-      )
+      needs.update-properties.result == 'success'
     steps:
       - name: Invoke workflow in another repo (Quickpick Dispatcher)
         uses: peter-evans/repository-dispatch@v4
