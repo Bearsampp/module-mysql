@@ -175,22 +175,22 @@ jobs:
 
                   version_match = None
 
-                  if module_name.lower() == 'git':
-                      # Git uses PortableGit format (e.g., "PortableGit-2.55.0.2-64-bit.7z.exe" -> "2.55.0.2")
+                  # All modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
+                  # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
+                  # Optional (?:-(?:RC|beta|alpha|dev)\d*)? preserves prerelease suffixes in the key (e.g., "bearsampp-mariadb-13.0.1-RC-2026.8.23.7z" -> "13.0.1-RC")
+                  # Legacy: also handle PortableGit format for older Git releases
+                  version_match = re.search(
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                      filename,
+                      re.IGNORECASE
+                  )
+                  if not version_match and module_name.lower() == 'git':
+                      # Fallback: legacy PortableGit format (e.g., "PortableGit-2.55.0.2-64-bit.7z.exe" -> "2.55.0.2")
                       version_match = re.search(
                           r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)',
                           filename,
                           re.IGNORECASE
                       )
-                  else:
-                       # Other modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
-                       # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
-                       # Optional (?:-(?:RC|beta|alpha|dev)\d*)? preserves prerelease suffixes in the key (e.g., "bearsampp-mariadb-13.0.1-RC-2026.8.23.7z" -> "13.0.1-RC")
-                       version_match = re.search(
-                           rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
-                           filename,
-                           re.IGNORECASE
-                       )
 
                   if version_match:
                       ver = version_match.group(1)
@@ -250,15 +250,14 @@ jobs:
               # URL format: .../bearsampp-apache-2.4.66-2025.12.8.7z (for apache)
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
               # URL format: .../PortableGit-2.55.0.2-64-bit.7z.exe (for Git)
-              if module_name.lower() == 'git':
+              url_version_match = re.search(
+                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
+                  url,
+                  re.IGNORECASE
+              )
+              if not url_version_match and module_name.lower() == 'git':
                   url_version_match = re.search(
                       r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)',
-                      url,
-                      re.IGNORECASE
-                  )
-              else:
-                  url_version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
                       url,
                       re.IGNORECASE
                   )
@@ -297,13 +296,12 @@ jobs:
                       asset_name = asset['name']
                       if not (asset_name.endswith('.7z') or asset_name.endswith('.7z.exe')):
                           continue
-                      if module_name.lower() == 'git':
+                      m = re.search(
+                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                          asset_name, re.IGNORECASE
+                      )
+                      if not m and module_name.lower() == 'git':
                           m = re.search(r'PortableGit-(\d+\.\d+(?:\.\d+)*)(?=-(?:\d+-)?bit|\.7z)', asset_name, re.IGNORECASE)
-                      else:
-                          m = re.search(
-                              rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
-                              asset_name, re.IGNORECASE
-                          )
                       if m:
                           ver = m.group(1)
                           if ver not in version_url_map:
