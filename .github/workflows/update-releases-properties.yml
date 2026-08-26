@@ -1,11 +1,18 @@
 name: Update Releases Properties
 
 # This workflow runs in individual module repositories (e.g., module-php)
-# It updates releases.properties on a PR branch when a PR is opened or run manually
+# It updates releases.properties when a PR is opened, a release is published, or run manually.
+#
+# PR trigger: auto-detects the latest prerelease from the repo's releases.
+# Release trigger: uses the published release tag directly.
+# Manual trigger: requires release_tag and branch inputs.
 
 on:
   pull_request:
     types: [opened]
+
+  release:
+    types: [published]
 
   workflow_dispatch:
     inputs:
@@ -17,7 +24,7 @@ on:
         required: true
 
 concurrency:
-  group: update-releases-${{ github.head_ref || github.event.inputs.branch }}
+  group: update-releases-${{ github.head_ref || github.event.inputs.branch || github.event.release.target_commitish || 'default' }}
   cancel-in-progress: false
 
 jobs:
@@ -30,25 +37,28 @@ jobs:
     steps:
       - name: Resolve release tag and branch
         id: resolve
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BRANCH="${{ github.head_ref }}"
-            RELEASE_TAG=$(python3 -c "
-          import os
-          body = os.environ.get('PR_BODY', '')
-          for line in body.split(chr(10)):
-              line = line.strip()
-              if line.startswith('Release:'):
-                  print(line.split(':', 1)[1].strip())
+            # Auto-detect: get the latest prerelease from the repo
+            RELEASE_TAG=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10" \
+              | python3 -c "
+          import sys, json
+          releases = json.load(sys.stdin)
+          for r in releases:
+              if r.get('prerelease'):
+                  print(r['tag_name'])
                   break
           ")
             if [[ -z "$RELEASE_TAG" ]]; then
-              echo "::error::Could not find release tag in PR body."
-              echo "Expected a line like: Release: php-2025.10.31"
+              echo "::error::No prerelease found on this repository."
+              echo "Create a prerelease before opening the PR, or use workflow_dispatch."
               exit 1
             fi
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            RELEASE_TAG="${{ github.event.release.tag_name }}"
+            BRANCH="${{ github.event.release.target_commitish }}"
           else
             RELEASE_TAG="${{ github.event.inputs.release_tag }}"
             BRANCH="${{ github.event.inputs.branch }}"
@@ -382,7 +392,9 @@ jobs:
           fi
 
       - name: Commit and push changes
-        if: steps.check_changes.outputs.has_changes == 'true'
+        if: >
+          steps.check_changes.outputs.has_changes == 'true' &&
+          github.event_name == 'pull_request'
         env:
           RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
           BRANCH: ${{ steps.resolve.outputs.branch }}
