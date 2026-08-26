@@ -394,7 +394,7 @@ jobs:
       - name: Commit and push changes
         if: >
           steps.check_changes.outputs.has_changes == 'true' &&
-          github.event_name == 'pull_request'
+          github.event_name != 'release'
         env:
           RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
           BRANCH: ${{ steps.resolve.outputs.branch }}
