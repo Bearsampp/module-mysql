@@ -35,30 +35,52 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
+      # ---------------------------------------------------------------------
+      # Resolve WHICH prerelease to read and WHICH branch to update.
+      #
+      # The module workflow is: create a version branch (e.g. 9.7.2) + PR,
+      # build + upload a prerelease (e.g. 2026.8.27), then merge. releases.properties
+      # must be updated ON that branch so branch module tests (mysql/mariadb-test)
+      # can download the new version. Ordering is not guaranteed: the PR may be
+      # opened before or after the prerelease is published, so both triggers are
+      # idempotent and defer gracefully instead of failing.
+      # ---------------------------------------------------------------------
       - name: Resolve release tag and branch
         id: resolve
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BRANCH="${{ github.head_ref }}"
-            # Auto-detect: get the latest prerelease from the repo
+            # Auto-detect the latest prerelease. If none exists yet (the
+            # prerelease-before-merge is usually created after the PR), do NOT
+            # fail — defer to the release event, which will update this branch.
             RELEASE_TAG=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10" \
               | python3 -c "
           import sys, json
-          releases = json.load(sys.stdin)
-          for r in releases:
+          for r in json.load(sys.stdin):
               if r.get('prerelease'):
-                  print(r['tag_name'])
-                  break
+                  print(r['tag_name']); break
           ")
             if [[ -z "$RELEASE_TAG" ]]; then
-              echo "::error::No prerelease found on this repository."
-              echo "Create a prerelease before opening the PR, or use workflow_dispatch."
-              exit 1
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "::notice::No prerelease published yet; the release event will update this branch once 2026.*.* is published."
+              echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+              exit 0
             fi
           elif [[ "${{ github.event_name }}" == "release" ]]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
-            BRANCH="${{ github.event.release.target_commitish }}"
+            # The release has the data but no branch. If a version PR is open,
+            # push the update to its branch so branch tests see the new version;
+            # otherwise fall back to main.
+            BRANCH=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls?state=open&per_page=100" \
+              | python3 -c "
+          import sys, json
+          for pr in json.load(sys.stdin):
+              if pr['head']['ref'] != 'main':
+                  print(pr['head']['ref']); break
+          ")
+            BRANCH="${BRANCH:-main}"
           else
             RELEASE_TAG="${{ github.event.inputs.release_tag }}"
             BRANCH="${{ github.event.inputs.branch }}"
@@ -70,6 +92,7 @@ jobs:
           echo "Branch: $BRANCH"
 
       - name: Checkout repository
+        if: steps.resolve.outputs.skip != 'true'
         uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_PAT }}
@@ -110,6 +133,7 @@ jobs:
           echo "Module name: ${MODULE_NAME}"
 
       - name: Update releases properties
+        if: steps.resolve.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
@@ -380,6 +404,7 @@ jobs:
 
       - name: Check for changes
         id: check_changes
+        if: steps.resolve.outputs.skip != 'true'
         run: |
           if git diff --quiet releases.properties 2>/dev/null; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
@@ -390,9 +415,12 @@ jobs:
           fi
 
       - name: Commit and push changes
+        # Commit on every event that produced changes. Pushes to the resolved
+        # branch (the version PR branch) so branch tests see the new entry, and
+        # mirrors to main so main stays consistent for the final release.
         if: >
-          steps.check_changes.outputs.has_changes == 'true' &&
-          github.event_name != 'release'
+          steps.resolve.outputs.skip != 'true' &&
+          steps.check_changes.outputs.has_changes == 'true'
         env:
           RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
           BRANCH: ${{ steps.resolve.outputs.branch }}
@@ -424,8 +452,11 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     needs: [update-properties]
+    # Only a published release should tell Bearsampp to combine releases. The
+    # PR trigger merely updates the branch for tests and must not fire this.
     if: |
       always() &&
+      github.event_name != 'pull_request' &&
       !endsWith(github.repository, '.settings') &&
       needs.update-properties.result == 'success'
     steps:
