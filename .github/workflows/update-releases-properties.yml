@@ -1,18 +1,27 @@
 name: Update Releases Properties
 
 # This workflow runs in individual module repositories (e.g., module-php)
-# It updates releases.properties when a PR is opened, a release is published, or run manually.
+# It updates releases.properties when a PR is opened, a release is published/edited, or run manually.
 #
 # PR trigger: auto-detects the latest prerelease from the repo's releases.
-# Release trigger: uses the published release tag directly.
+# Release trigger: uses the published/edited release tag directly.
 # Manual trigger: requires release_tag and branch inputs.
+#
+# TEST RE-RUN CONTRACT:
+#   Updating the PR branch (git push) is what makes the module test workflows
+#   re-run (via the PR "synchronize" event). We only push when releases.properties
+#   actually changed (has_changes == true), so a test re-run happens ONLY when:
+#     - a NEW prerelease is published  (new <version> = <url> entry added), or
+#     - an EXISTING prerelease's .7z files are added/changed (URL updated).
+#   Cosmetic edits (title/notes only) leave releases.properties unchanged and
+#   therefore do NOT re-run the tests.
 
 on:
   pull_request:
     types: [opened]
 
   release:
-    types: [published]
+    types: [published, edited]
 
   workflow_dispatch:
     inputs:
