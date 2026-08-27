@@ -407,6 +407,20 @@ jobs:
           Auto-generated from release ${RELEASE_TAG}"
           git push origin HEAD:${BRANCH}
 
+          # Also update main branch directly without a PR
+          if [[ "${BRANCH}" != "main" ]]; then
+            COMMIT_SHA=$(git rev-parse HEAD)
+            git fetch origin main
+            git checkout main
+            if git cherry-pick --no-edit $COMMIT_SHA; then
+              git push origin main
+            else
+              echo "::warning::Cherry-pick to main failed, skipping main sync"
+              git cherry-pick --abort 2>/dev/null || true
+            fi
+            git checkout ${BRANCH} || true
+          fi
+
   dispatch:
     runs-on: ubuntu-latest
     needs: [update-properties]
