@@ -209,11 +209,12 @@ jobs:
                   version_match = None
 
                   # All modules use bearsampp-prefix format (e.g., "bearsampp-apache-2.4.66-2025.12.8.7z" -> "2.4.66")
-                  # Optional (?:-\d+)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1"
+                  # Optional (?:-1)? handles revision-style versions like "bearsampp-ruby-4.0.6-1-2026.8.9.7z" -> "4.0.6-1".
+                  # Arbitrary build counters (e.g. Apache "-260617") are NOT captured as part of the version.
                   # Optional (?:-(?:RC|beta|alpha|dev)\d*)? preserves prerelease suffixes in the key (e.g., "bearsampp-mariadb-13.0.1-RC-2026.8.23.7z" -> "13.0.1-RC")
                   # Legacy: also handle PortableGit format for older Git releases
                   version_match = re.search(
-                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                      rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-1)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?:-\d+)?(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
                       filename,
                       re.IGNORECASE
                   )
@@ -284,7 +285,7 @@ jobs:
               # URL format: .../bearsampp-postgresql-18.1-2025.12.8.7z (for other modules)
               # URL format: .../PortableGit-2.55.0.2-64-bit.7z.exe (for Git)
               url_version_match = re.search(
-                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
+                  rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-1)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?:-\d+)?(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|/|$)',
                   url,
                   re.IGNORECASE
               )
@@ -330,7 +331,7 @@ jobs:
                       if not (asset_name.endswith('.7z') or asset_name.endswith('.7z.exe')):
                           continue
                       m = re.search(
-                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-\d+)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
+                          rf'{filename_prefix}-(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:-1)?(?:-(?:RC|beta|alpha|dev)\d*)?)(?:-\d+)?(?=-20\d{{2}}\.\d{{1,2}}\.\d{{1,2}}|\.7z|$)',
                           asset_name, re.IGNORECASE
                       )
                       if not m and module_name.lower() == 'git':
