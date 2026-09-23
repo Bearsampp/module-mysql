@@ -57,7 +57,7 @@ concurrency:
 
 jobs:
   update-properties:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Full action for every trigger. A pre-release (`prereleased`, or `published`
     # while still marked as a pre-release) updates releases.properties on the
     # version PR's branch too, so branch module tests can download the new build.
@@ -551,7 +551,7 @@ jobs:
           fi
 
   dispatch:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [update-properties]
     # Quickpick dispatcher. Fires on EVERY non-PR trigger, including release
     # deletion (a purged releases.properties must recombine so the removed
