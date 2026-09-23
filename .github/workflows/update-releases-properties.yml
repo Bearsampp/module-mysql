@@ -9,7 +9,8 @@ name: Update Releases Properties
 # Manual trigger: requires release_tag and branch inputs; runs the full action.
 # Release event behavior:
 #   - 'prereleased', or 'published' while still marked as a pre-release:
-#         quickpick dispatcher ONLY (no releases.properties changes).
+#         full action that adds/updates the new version in releases.properties
+#         on the version PR's branch (then dispatches to quickpick).
 #   - 'edited' (files changed): full action that rechecks the file URL and
 #         updates the stored version/url when the file URL has changed, and
 #         purges any entries whose files were removed from the release.
@@ -20,11 +21,11 @@ name: Update Releases Properties
 #
 # TEST RE-RUN CONTRACT:
 #   Updating the PR branch (git push) is what makes the module test workflows
-#   re-run (via the PR "synchronize" event). With the dispatch-only pre-release
-#   stage, branch pushes happen on the full action (edited/released/manual) and
-#   only when releases.properties actually changed (has_changes == true).
-#   Cosmetic edits (title/notes only) leave releases.properties unchanged and
-#   therefore do NOT re-run the tests.
+#   re-run (via the PR "synchronize" event). Every full action — pre-release,
+#   edited, released, manual — pushes the PR branch only when releases.properties
+#   actually changed (has_changes == true). A new pre-release therefore adds its
+#   entry (triggering a test re-run); cosmetic edits (title/notes only) leave
+#   releases.properties unchanged and do NOT re-run the tests.
 
 on:
   pull_request:
@@ -52,13 +53,11 @@ concurrency:
 jobs:
   update-properties:
     runs-on: ubuntu-latest
-    # Full action. Skipped ONLY for the dispatch-only pre-release stage
-    # ('prereleased', or 'published' while still marked as a pre-release);
-    # those triggers just fire the quickpick dispatcher below.
+    # Full action for every trigger. A pre-release (`prereleased`, or `published`
+    # while still marked as a pre-release) updates releases.properties on the
+    # version PR's branch too, so branch module tests can download the new build.
     if: |
-      !endsWith(github.repository, '.settings') &&
-      !(github.event_name == 'release' && github.event.action == 'prereleased') &&
-      !(github.event_name == 'release' && github.event.action == 'published' && github.event.release.prerelease)
+      !endsWith(github.repository, '.settings')
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -551,10 +550,10 @@ jobs:
     needs: [update-properties]
     # Quickpick dispatcher. Fires on every non-PR trigger, including release
     # deletion (a purged releases.properties must recombine so the removed
-    # version disappears from the combined release). It runs after the full
-    # action updated releases.properties ('success'), or directly when a
-    # pre-release was created/published and the properties job was skipped
-    # ('skipped'). If the properties job failed, do NOT dispatch.
+    # version disappears from the combined release). It runs after update-
+    # properties finished ('success'). 'skipped' is kept only as a defensive
+    # fallback (pre-releases are no longer skip-only). If the properties job
+    # failed, do NOT dispatch.
     if: |
       always() &&
       github.event_name != 'pull_request' &&
