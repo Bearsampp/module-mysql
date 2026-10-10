@@ -39,8 +39,8 @@ Raw snapshot data lives in [`downloads.json`](downloads.json).
 |---|---|
 | Repository | `Bearsampp/module-mysql` |
 | Update mode | daily |
-| Window | 45 days |
-| Snapshots collected | 1 |
+| Window | 180 days |
+| Snapshots collected | 3 |
 | Day / week / month | partial — not enough history yet |
 
 `day`, `week`, and `month` stay flagged partial until the action has collected enough daily history to compare against. Expect roughly a week before weekly comparisons become meaningful and a month before monthly ones do.
