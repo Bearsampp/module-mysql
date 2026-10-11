@@ -125,14 +125,14 @@ jobs:
 
       - name: Checkout repository
         if: steps.resolve.outputs.skip != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.GH_PAT }}
           ref: ${{ steps.resolve.outputs.branch }}
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
