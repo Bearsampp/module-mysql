@@ -19,7 +19,7 @@
   </defs>
   <rect class="bg" x="0" y="0" width="1000" height="360" rx="16" />
   <text class="title" x="64" y="34">Bearsampp/module-mysql release downloads</text>
-  <text class="sub" x="64" y="352">Generated 2026-10-18</text>
+  <text class="sub" x="64" y="352">Generated 2026-10-19</text>
   <line x1="64" y1="52.00" x2="976" y2="52.00" class="grid"/>
   <text x="56" y="56.00" text-anchor="end" class="axis">57</text>
   <line x1="64" y1="94.00" x2="976" y2="94.00" class="grid"/>
@@ -34,15 +34,16 @@
   <text x="56" y="266.00" text-anchor="end" class="axis">10</text>
   <line x1="64" y1="304.00" x2="976" y2="304.00" class="grid"/>
   <text x="56" y="308.00" text-anchor="end" class="axis">0</text>
-  <path d="M 64.00 304 L 64.00 304.00 L 155.20 281.89 L 246.40 233.26 L 337.60 202.32 L 428.80 180.21 L 520.00 158.11 L 611.20 100.63 L 702.40 65.26 L 793.60 56.42 L 884.80 56.42 L 976.00 52.00 L 976.00 304 Z" fill="url(#fill-monthly-black)"/>
-  <polyline class="line" points="64.00,304.00 155.20,281.89 246.40,233.26 337.60,202.32 428.80,180.21 520.00,158.11 611.20,100.63 702.40,65.26 793.60,56.42 884.80,56.42 976.00,52.00"/>
+  <path d="M 64.00 304 L 64.00 304.00 L 146.91 281.89 L 229.82 233.26 L 312.73 202.32 L 395.64 180.21 L 478.55 158.11 L 561.45 100.63 L 644.36 65.26 L 727.27 56.42 L 810.18 56.42 L 893.09 52.00 L 976.00 52.00 L 976.00 304 Z" fill="url(#fill-monthly-black)"/>
+  <polyline class="line" points="64.00,304.00 146.91,281.89 229.82,233.26 312.73,202.32 395.64,180.21 478.55,158.11 561.45,100.63 644.36,65.26 727.27,56.42 810.18,56.42 893.09,52.00 976.00,52.00"/>
   <circle class="dot" cx="976.00" cy="52.00" r="4.5"/>
   
   <text class="axis" x="64.00" y="336" text-anchor="start">2026-10-07</text>
-  <text class="axis" x="246.40" y="336" text-anchor="middle">2026-10-10</text>
-  <text class="axis" x="428.80" y="336" text-anchor="middle">2026-10-12</text>
-  <text class="axis" x="611.20" y="336" text-anchor="middle">2026-10-14</text>
-  <text class="axis" x="793.60" y="336" text-anchor="middle">2026-10-16</text>
-  <text class="axis" x="976.00" y="336" text-anchor="end">2026-10-18</text>
+  <text class="axis" x="229.82" y="336" text-anchor="middle">2026-10-10</text>
+  <text class="axis" x="395.64" y="336" text-anchor="middle">2026-10-12</text>
+  <text class="axis" x="561.45" y="336" text-anchor="middle">2026-10-14</text>
+  <text class="axis" x="727.27" y="336" text-anchor="middle">2026-10-16</text>
+  <text class="axis" x="893.09" y="336" text-anchor="middle">2026-10-18</text>
+  <text class="axis" x="976.00" y="336" text-anchor="end">2026-10-19</text>
   <text class="latest" x="976" y="34" text-anchor="end">Latest month: 57</text>
 </svg>
