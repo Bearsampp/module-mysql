@@ -138,13 +138,13 @@ def downloadFromModulesUntouched(String version, File destDir) {
             println "Version ${version} not found in modules-untouched mysql.properties"
             println "Attempting to construct URL based on standard format..."
             // Fallback to constructed URL
-            untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
+            untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/mysql-${version}/mysql-${version}-winx64.zip"
             println "  ${untouchedUrl}"
         }
     } else {
         println "Could not fetch mysql.properties, using standard URL format..."
         // Fallback to constructed URL
-        untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
+        untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/mysql-${version}/mysql-${version}-winx64.zip"
         println "  ${untouchedUrl}"
     }
 
