@@ -1,3 +1,3 @@
 @ECHO OFF
 
-%~dp0bin\mysqld.exe --initialize-insecure
+"%~dp0bin\mysqld.exe" --initialize-insecure

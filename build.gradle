@@ -124,29 +124,36 @@ def fetchModulesUntouchedProperties() {
 def downloadFromModulesUntouched(String version, File destDir) {
     println "Checking modules-untouched repository..."
 
-    // First, try to fetch mysql.properties from modules-untouched
+    // Resolve the download URL from the authoritative modules-untouched mapping.
+    // Do not guess a URL: release tags and asset names are not derivable from
+    // the version alone (for example, 8.0.27 lives under the "mysql-r15" tag).
     def untouchedProps = fetchModulesUntouchedProperties()
-    def untouchedUrl = null
+    if (!untouchedProps) {
+        throw new GradleException("""
+            Could not fetch modules-untouched mysql.properties.
+            Unable to resolve a download URL for MySQL ${version}.
 
-    if (untouchedProps) {
-        untouchedUrl = untouchedProps.getProperty(version)
-        if (untouchedUrl) {
-            println "Found version ${version} in modules-untouched mysql.properties"
-            println "Downloading from:"
-            println "  ${untouchedUrl}"
-        } else {
-            println "Version ${version} not found in modules-untouched mysql.properties"
-            println "Attempting to construct URL based on standard format..."
-            // Fallback to constructed URL
-            untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
-            println "  ${untouchedUrl}"
-        }
-    } else {
-        println "Could not fetch mysql.properties, using standard URL format..."
-        // Fallback to constructed URL
-        untouchedUrl = "https://downloads.mysql.com/archives/get/p/23/file/mysql-${version}-winx64.zip"
-        println "  ${untouchedUrl}"
+            Please verify:
+            1. You have internet connectivity
+            2. https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/mysql.properties is reachable
+        """.stripIndent())
     }
+
+    def untouchedUrl = untouchedProps.getProperty(version)
+    if (!untouchedUrl) {
+        throw new GradleException("""
+            MySQL version ${version} is not listed in modules-untouched mysql.properties.
+            Refusing to guess a download URL.
+
+            Add the version to:
+            https://github.com/Bearsampp/modules-untouched/blob/main/modules/mysql.properties
+            or remove it from this build.
+        """.stripIndent())
+    }
+
+    println "Found version ${version} in modules-untouched mysql.properties"
+    println "Downloading from:"
+    println "  ${untouchedUrl}"
 
     // Determine filename from URL
     def filename = untouchedUrl.substring(untouchedUrl.lastIndexOf('/') + 1)
@@ -177,8 +184,8 @@ def downloadFromModulesUntouched(String version, File destDir) {
                 Tried URL: ${untouchedUrl}
 
                 Please verify:
-                1. Version ${version} exists in modules-untouched repository
-                2. The URL is correct in mysql.properties or matches format: mysql-{version}-winx64.zip
+                1. Version ${version} exists in modules-untouched mysql.properties
+                2. The URL in mysql.properties is correct
                 3. You have internet connectivity
             """.stripIndent())
         }
@@ -290,7 +297,7 @@ def downloadAndExtractMysql(String version, File destDir) {
 
     // Note about source
     println ""
-    println "NOTE: Version ${version} was sourced from modules-untouched (or fallback URL)."
+    println "NOTE: Version ${version} was sourced from modules-untouched."
 
     return mysqlDir
 }
@@ -1109,8 +1116,8 @@ tasks.register('checkModulesUntouched') {
             println "=".multiply(70)
             println ""
             println "Version Resolution Strategy:"
-            println "  1. Check modules-untouched mysql.properties (remote)"
-            println "  2. Construct standard URL format (fallback)"
+            println "  1. Look up the version in modules-untouched mysql.properties (remote)"
+            println "  2. Fail if the version is not listed (no guessed URLs)"
             println ""
 
         } else {
@@ -1124,8 +1131,7 @@ tasks.register('checkModulesUntouched') {
             println "  - Repository access problems"
             println "  - File not available at expected location"
             println ""
-            println "The build system will fall back to:"
-            println "  1. Standard URL format construction"
+            println "Builds that need a download will fail until the mapping is available."
         }
     }
 }
